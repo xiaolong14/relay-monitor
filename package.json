@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "promptfoo": "0.115.0"
+  },
+  "engines": {
+    "node": ">=18 <23"
+  }
+}

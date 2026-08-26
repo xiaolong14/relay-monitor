@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中转站质量监控系统</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.462.0/dist/umd/lucide.min.js"></script>
+<style>
+:root{--blue:#0071e3;--blue-hover:#0077ed;--green:#248a3d;--red:#d70015;--orange:#b25000;--ink:#1d1d1f;--sub:#6e6e73;--line:rgba(0,0,0,.08);--surface:rgba(255,255,255,.78);--bg:#f5f5f7;--shadow:0 20px 60px rgba(0,0,0,.07);--ease:cubic-bezier(.28,.11,.32,1)}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 14% 5%,rgba(0,113,227,.09),transparent 27%),radial-gradient(circle at 88% 18%,rgba(175,82,222,.07),transparent 24%);z-index:-1}
+header{position:sticky;top:0;z-index:50;height:52px;padding:0 max(22px,calc((100vw - 1240px)/2));display:flex;align-items:center;gap:28px;background:rgba(250,250,252,.78);border-bottom:1px solid rgba(0,0,0,.06);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px)}
+header h1{display:flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:650;letter-spacing:-.2px;white-space:nowrap}
+header h1 .lucide{width:18px;height:18px;color:var(--blue)}
+nav{display:flex;align-items:center;height:100%;gap:2px}
+nav button{height:100%;padding:0 13px;border:0;background:transparent;color:#49494d;font-size:12px;cursor:pointer;transition:color .25s var(--ease),opacity .25s var(--ease)}
+nav button:hover{color:var(--blue)}
+nav button.active{color:var(--ink);font-weight:600}
+nav button.active:after{content:"";display:block;height:2px;margin-top:-2px;background:var(--ink);border-radius:2px}
+main{max-width:1280px;margin:0 auto;padding:0 22px 80px}
+section{animation:reveal .55s var(--ease)}
+.hero{padding:72px 8px 38px;text-align:center}
+.eyebrow{margin:0 0 12px;color:var(--blue);font-size:14px;font-weight:650;letter-spacing:.2px}
+.hero h2{margin:0;font-size:clamp(36px,5vw,64px);line-height:1.04;letter-spacing:-2.8px;font-weight:700;background:linear-gradient(100deg,#1d1d1f 20%,#5c5c62 72%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{max-width:720px;margin:18px auto 0;color:var(--sub);font-size:18px;line-height:1.55;letter-spacing:-.25px}
+.card{position:relative;margin-bottom:22px;padding:26px 28px;background:var(--surface);border:1px solid rgba(255,255,255,.7);border-radius:24px;box-shadow:var(--shadow);backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);overflow:hidden;transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
+.card:hover{box-shadow:0 28px 75px rgba(0,0,0,.09)}
+.card h2{display:flex;align-items:center;gap:8px;margin:0 0 20px;font-size:18px;letter-spacing:-.35px}
+.toolbar{display:flex;align-items:center;gap:10px;padding:13px 16px;border-radius:18px;background:rgba(255,255,255,.7);box-shadow:0 10px 35px rgba(0,0,0,.05);border:1px solid rgba(255,255,255,.82);backdrop-filter:blur(20px)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:20px 0 22px}
+.metric{position:relative;min-height:142px;padding:21px 22px;border-radius:22px;background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.85);box-shadow:0 14px 38px rgba(0,0,0,.055);overflow:hidden;transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
+.metric:hover{transform:translateY(-4px);box-shadow:0 22px 48px rgba(0,0,0,.09)}
+.metric:after{content:"";position:absolute;width:90px;height:90px;border-radius:50%;right:-28px;top:-30px;background:var(--glow,rgba(0,113,227,.1));filter:blur(2px)}
+.metric-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:var(--tone,#e8f3ff);color:var(--accent,var(--blue));margin-bottom:17px}
+.metric-icon .lucide{width:17px;height:17px}
+.metric-value{font-size:30px;line-height:1;font-weight:700;letter-spacing:-1.3px}
+.metric-label{margin-top:8px;color:var(--sub);font-size:12px}
+.reco{display:flex;align-items:center;gap:15px;margin-bottom:22px;padding:18px 22px;border-radius:20px;color:#12672a;background:linear-gradient(135deg,rgba(225,250,231,.9),rgba(244,255,247,.86));border:1px solid rgba(36,138,61,.15);box-shadow:0 14px 38px rgba(36,138,61,.08);font-size:14px}
+.reco>.lucide{flex:none;width:22px;height:22px}
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.45)}
+table{width:100%;border-collapse:separate;border-spacing:0}
+th,td{padding:14px 12px;border-bottom:1px solid rgba(0,0,0,.055);font-size:12px;text-align:center;white-space:nowrap}
+th{position:sticky;top:0;z-index:2;background:rgba(246,246,248,.94);color:var(--sub);font-weight:600;backdrop-filter:blur(12px)}
+tr:last-child td{border-bottom:0}
+tr td{transition:background .2s var(--ease)}
+tr:hover td{background:rgba(0,113,227,.025)}
+.ok{color:var(--green);font-weight:600}.bad{color:var(--red);font-weight:600}.warn{color:var(--orange);font-weight:600}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:34px;padding:7px 14px;border:0;border-radius:980px;background:#e8e8ed;color:var(--ink);font:500 12px inherit;cursor:pointer;transition:all .25s var(--ease);white-space:nowrap}
+.btn:hover{background:#dedee3;transform:scale(1.025)}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--blue);color:#fff;box-shadow:0 8px 20px rgba(0,113,227,.2)}
+.btn-primary:hover{background:var(--blue-hover)}
+.btn-danger{color:var(--red);background:#fff0f1}
+.btn-danger:hover{background:#ffe3e5}
+.btn-sm{min-height:28px;padding:5px 10px;font-size:11px}
+input,select{width:100%;height:40px;padding:0 13px;border:1px solid rgba(0,0,0,.12);border-radius:11px;background:rgba(255,255,255,.85);color:var(--ink);font:13px inherit;outline:none;transition:border .2s,box-shadow .2s,background .2s}
+input:focus,select:focus{border-color:var(--blue);background:#fff;box-shadow:0 0 0 4px rgba(0,113,227,.12)}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--blue)}
+label{display:block;margin:13px 0 6px;color:var(--sub);font-size:12px;font-weight:550}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.stat{padding:20px;border-radius:20px;background:#fff;border:1px solid var(--line)}
+.stat .v{margin-top:5px;font-size:28px;font-weight:700}.stat .s{color:var(--sub);font-size:12px}
+#runlog{max-height:320px;overflow-y:auto;padding:18px 20px;border-radius:17px;background:#111113;color:#a8e6b2;font:12px/1.8 "SFMono-Regular",Consolas,monospace;white-space:pre-wrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.hidden{display:none!important}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.row>*{flex:0 0 auto}
+.muted{color:var(--sub);font-size:11px;line-height:1.6}
+.model-chip{display:inline-flex;align-items:center;max-width:230px;padding:5px 9px;border-radius:8px;background:#f0f0f2;color:#36363a;font:11px "SFMono-Regular",Consolas,monospace;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.status-pill{display:inline-flex;align-items:center;gap:4px;padding:5px 9px;border-radius:980px;background:#f2f2f4}
+.detail-row td{background:rgba(0,113,227,.025)!important}.detail-label{display:flex;align-items:center;justify-content:flex-end;gap:5px;color:var(--sub)}
+.lucide{width:15px;height:15px;vertical-align:-3px}.btn .lucide{width:13px;height:13px}nav .lucide{margin-right:5px;width:14px}h2 .lucide{width:17px;height:17px}td .lucide{margin-right:3px}
+.form2{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
+.settings-layout{display:grid;grid-template-columns:.85fr 1.4fr;gap:22px}
+.section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}
+.section-head h2{margin:0 0 5px}.section-head p{margin:0}
+.chart-shell{height:390px}
+#toast{position:fixed;left:50%;bottom:28px;z-index:100;display:none;max-width:min(520px,90vw);padding:12px 18px;transform:translateX(-50%);border-radius:980px;background:rgba(29,29,31,.88);color:#fff;font-size:12px;box-shadow:0 18px 50px rgba(0,0,0,.22);backdrop-filter:blur(20px);animation:toastIn .3s var(--ease)}
+dialog{width:min(620px,92vw);padding:28px;border:1px solid rgba(255,255,255,.7);border-radius:24px;background:rgba(250,250,252,.94);box-shadow:0 40px 100px rgba(0,0,0,.25);backdrop-filter:blur(28px)}
+dialog::backdrop{background:rgba(0,0,0,.28);backdrop-filter:blur(12px)}
+dialog h2{font-size:24px;letter-spacing:-.7px}
+@keyframes spin{to{transform:rotate(360deg)}}@keyframes reveal{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@keyframes toastIn{from{opacity:0;transform:translate(-50%,12px)}to{opacity:1;transform:translate(-50%,0)}}
+.spin{animation:spin 1s linear infinite}
+@media(max-width:900px){header{padding:0 16px;gap:10px;overflow-x:auto}header h1{display:none}nav button{padding:0 10px}main{padding:0 13px 50px}.hero{padding:50px 8px 30px}.hero h2{letter-spacing:-1.8px}.hero p{font-size:16px}.metrics{grid-template-columns:1fr 1fr}.settings-layout{grid-template-columns:1fr}.card{padding:20px}.chart-shell{height:310px}}
+@media(max-width:560px){header{position:fixed;top:auto;bottom:0;width:100%;height:64px;padding:0 8px;justify-content:center;overflow:visible;border-top:1px solid rgba(0,0,0,.08);border-bottom:0}header nav{flex:1;justify-content:space-around}nav button{display:flex;min-width:55px;height:58px;padding:7px 4px 4px;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:9px}nav button.active:after{display:none}nav button.active{color:var(--blue)}nav .lucide{width:18px;height:18px;margin:0}header>div:last-child{margin-left:0!important}header>div:last-child .btn{width:42px;height:42px;padding:0;font-size:0;box-shadow:0 7px 18px rgba(0,113,227,.28)}header>div:last-child .btn .lucide{width:17px;height:17px}main{padding-bottom:88px}.metrics{grid-template-columns:1fr}.metric{min-height:116px}.form2{grid-template-columns:1fr}.toolbar{align-items:stretch}.toolbar select{width:100%!important}.section-head{flex-direction:column}.hero{padding-top:44px}.hero h2{font-size:38px}.card{border-radius:20px;padding:17px}.chart-shell{height:280px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1><i data-lucide="radar"></i>中转站质量监控</h1>
+  <nav>
+    <button data-tab="dash" class="active"><i data-lucide="layout-dashboard"></i>仪表盘</button>
+    <button data-tab="relays"><i data-lucide="plug-zap"></i>中转站管理</button>
+    <button data-tab="questions"><i data-lucide="book-open"></i>题库</button>
+    <button data-tab="settings"><i data-lucide="settings"></i>设置</button>
+  </nav>
+  <div style="margin-left:auto">
+    <button class="btn btn-primary" onclick="triggerRun()"><i data-lucide="play"></i>立即评测</button>
+  </div>
+</header>
+<main>
+
+<!-- ===================== 仪表盘 ===================== -->
+<section id="tab-dash">
+  <div class="hero">
+    <p class="eyebrow">持续评测 · 真实基准</p>
+    <h2>看见每一次<br>模型质量变化。</h2>
+    <p>用连续、可追溯的公开基准评测，发现中转站的模型替换、质量波动与恢复时刻。</p>
+  </div>
+  <div id="recoBox" class="reco hidden"></div>
+  <div class="toolbar" style="margin-bottom:22px">
+    <label style="margin:0"><i data-lucide="calendar"></i>日期</label>
+    <select id="daySel" style="width:180px" onchange="loadDay()"></select>
+    <button class="btn btn-sm" onclick="openReport()"><i data-lucide="file-text"></i>查看当日日报</button>
+    <span class="muted" id="runState"></span>
+    <span id="runCtl" class="hidden" style="margin-left:auto">
+      <button class="btn btn-sm" id="btnPause" onclick="pauseRun()"><i data-lucide="pause"></i>暂停</button>
+      <button class="btn btn-sm hidden" id="btnResume" onclick="resumeRun()"><i data-lucide="play"></i>继续</button>
+      <button class="btn btn-sm btn-danger" onclick="stopRun()"><i data-lucide="square"></i>强制停止</button>
+    </span>
+  </div>
+  <div id="metricGrid" class="metrics"></div>
+  <div class="card">
+    <div class="section-head"><div><h2><i data-lucide="table-2"></i>各站质量详情</h2><p class="muted">当日多次测试按有效题数加权汇总，展开可查看模型快照。</p></div></div>
+    <div class="table-wrap"><table id="dayTable"></table></div>
+  </div>
+  <div class="card">
+    <div class="section-head"><div><h2><i data-lucide="chart-no-axes-combined"></i>历史分数走势</h2><p class="muted">固定基准下的长期变化，比单次跑分更能揭示真实质量。</p></div></div>
+    <div class="chart-shell"><canvas id="trendChart"></canvas></div>
+  </div>
+  <div class="card hidden" id="runCard">
+    <h2><i data-lucide="terminal"></i>评测日志</h2>
+    <div id="runlog"></div>
+  </div>
+</section>
+
+<!-- ===================== 中转站管理 ===================== -->
+<section id="tab-relays" class="hidden">
+  <div class="hero"><p class="eyebrow">连接与管理</p><h2>你的模型通道，<br>一目了然。</h2><p>集中维护协议、模型和访问端点，并按需发起单站或组合评测。</p></div>
+  <div class="card">
+    <div class="section-head">
+      <div><h2>中转站列表</h2><p class="muted">API Key 始终脱敏展示，编辑留空即可保持原 Key。</p></div>
+      <div class="row">
+        <button class="btn" onclick="testSelected()"><i data-lucide="play"></i>测试选中</button>
+        <button class="btn btn-primary" onclick="openRelayDialog()"><i data-lucide="plus"></i>新增中转站</button>
+      </div>
+    </div>
+    <div class="table-wrap"><table id="relayTable"></table></div>
+    <p class="muted">说明：apiKey 编辑时留空表示保持不变；「停用」的站点不参与每日评测。
+      可勾选多个站点后点「测试选中」，或点单行的「测试」按钮单独重测。</p>
+  </div>
+</section>
+
+<!-- ===================== 题库 ===================== -->
+<section id="tab-questions" class="hidden">
+  <div class="hero"><p class="eyebrow">开放基准 · 版本可追溯</p><h2>更难的题目，<br>更真实的差异。</h2><p>从公开学术基准重新抽样，保留每一个题库版本，确保长期比较公平可信。</p></div>
+  <div class="card">
+    <h2><i data-lucide="download"></i>重新抽样（创建新版本）</h2>
+    <div class="row">
+      <select id="dsSource" style="width:340px"></select>
+      <label style="margin:0">抽样数量</label>
+      <input type="number" id="dsCount" value="100" min="5" max="200" style="width:90px">
+      <button class="btn btn-primary" id="dsBtn" onclick="importDataset()"><i data-lucide="download"></i>抽样并生成新版本</button>
+    </div>
+    <p class="muted">题目来自公开学术基准（GSM8K 为 OpenAI 官方开源数学推理基准；LiveBench 每月更新防污染）。
+      每次抽样生成一个<b>新版本</b>并自动启用，旧版本完整保留、可随时恢复。下载需数秒到一分钟。</p>
+  </div>
+  <div class="card">
+    <h2><i data-lucide="git-branch"></i>题库版本（可恢复）</h2>
+    <div class="table-wrap"><table id="verTable"></table></div>
+    <p class="muted">「使用中」的版本为每日评测出题依据；恢复旧版本后，第二天起按旧版本题目计分。</p>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <h2 style="margin:0">当前版本题库（<span id="qCount">0</span> 题）</h2>
+      <button class="btn btn-primary" onclick="openQDialog()"><i data-lucide="plus"></i>手动新增题目</button>
+    </div>
+    <div class="table-wrap"><table id="qTable"></table></div>
+  </div>
+</section>
+
+<!-- ===================== 设置 ===================== -->
+<section id="tab-settings" class="hidden">
+  <div class="hero"><p class="eyebrow">自动化与判定</p><h2>精确控制，<br>安静地持续运行。</h2><p>设置每日评测节奏、质量基线和并发策略，让系统自动完成长期监控。</p></div>
+  <div class="settings-layout">
+  <div class="card">
+    <h2>定时评测</h2>
+    <div class="row">
+      <label style="margin:0"><input type="checkbox" id="s_enabled" style="width:auto"> 启用每日自动评测</label>
+      <label style="margin:0 0 0 20px">执行时间</label>
+      <input type="time" id="s_time" style="width:130px">
+      <span class="muted">（需保持本服务运行；服务重启后当天若已跑过不会重复跑）</span>
+    </div>
+  </div>
+  <div class="card">
+    <h2>判定参数</h2>
+    <div class="form2">
+      <div><label>基线窗口（天，默认 7）</label><input type="number" id="s_baseline" min="3" max="30" value="7"></div>
+      <div><label>观察期最少历史（天，默认 3）</label><input type="number" id="s_minhist" min="1" max="10" value="3"></div>
+      <div><label>掺水判定阈值（分，默认 8）</label><input type="number" id="s_drop" step="0.5" value="8"></div>
+      <div><label>最大输出 Token（默认 512）</label><input type="number" id="s_tokens" min="64" max="4096" value="512"></div>
+      <div><label>评测并发数（单站默认 5）</label><input type="number" id="s_conc" min="1" max="20" value="5"></div>
+      <div><label>429 限流重测并发</label><input type="number" id="s_conc_fb" min="1" max="1" value="1" readonly></div>
+      <div><label>站点并行数（默认及上限 10）</label><input type="number" id="s_par" min="1" max="10" value="10"></div>
+    </div>
+    <div style="margin-top:16px"><button class="btn btn-primary" onclick="saveSettings()"><i data-lucide="save"></i>保存设置</button></div>
+  </div>
+  </div>
+</section>
+</main>
+
+<!-- 中转站编辑弹窗 -->
+<dialog id="relayDlg">
+  <h2 style="margin-top:0;font-size:16px" id="relayDlgTitle">新增中转站</h2>
+  <div class="form2">
+    <div><label>显示名称</label><input id="r_label" placeholder="如 A站"></div>
+    <div><label>唯一标识（英文）</label><input id="r_name" placeholder="如 relay-a"></div>
+    <div><label>协议</label>
+      <select id="r_protocol"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic 原生</option></select>
+    </div>
+    <div><label>模型名</label><input id="r_model" placeholder="如 gpt-4o / claude-sonnet-4"></div>
+    <div style="grid-column:1/-1"><label>Base URL（OpenAI 兼容需带 /v1）</label><input id="r_baseUrl" placeholder="https://xxx.com/v1"></div>
+    <div style="grid-column:1/-1"><label>API Key（编辑时留空=不修改）</label><input id="r_apiKey" placeholder="sk-..."></div>
+  </div>
+  <div class="row" style="margin-top:16px;justify-content:flex-end">
+    <button class="btn" onclick="relayDlg.close()">取消</button>
+    <button class="btn btn-primary" onclick="saveRelay()"><i data-lucide="save"></i>保存</button>
+  </div>
+</dialog>
+
+<!-- 题目编辑弹窗 -->
+<dialog id="qDlg">
+  <h2 style="margin-top:0;font-size:16px">新增题目</h2>
+  <label>题目（建议要求只输出答案）</label>
+  <input id="q_q" placeholder="如：计算 17×23，只输出数字">
+  <label>标准答案（判分用包含匹配）</label>
+  <input id="q_answer" placeholder="如：391">
+  <div class="row" style="margin-top:16px;justify-content:flex-end">
+    <button class="btn" onclick="qDlg.close()">取消</button>
+    <button class="btn btn-primary" onclick="saveQuestion()"><i data-lucide="save"></i>保存</button>
+  </div>
+</dialog>
+
+<div id="toast"></div>
+
+<script>
+/* ---------------- 通用 ---------------- */
+const $ = id => document.getElementById(id);
+let trendChart = null;        // 走势图实例
+let editingRelay = null;      // 当前编辑的中转站原始 name（null=新增）
+let pollTimer = null;         // 评测进度轮询定时器
+const expandedStations = new Set();  // 已展开「每次评测明细」的站点
+
+/** 展开/收起某站的每次评测明细 */
+function toggleRuns(name){
+  if(expandedStations.has(name)) expandedStations.delete(name);
+  else expandedStations.add(name);
+  loadDay();
+}
+
+/** 渲染 lucide 图标（动态内容更新后调用） */
+function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+
+/** 轻提示 */
+function toast(msg){ $('toast').textContent = msg; $('toast').style.display='block';
+  setTimeout(()=>$('toast').style.display='none', 2500); }
+
+/** API 快捷请求 */
+async function api(path, opts){ const r = await fetch(path, opts &&
+  {headers:{'Content-Type':'application/json'}, ...opts}); if(!r.ok){
+  const e = await r.json().catch(()=>({detail:r.statusText})); throw new Error(e.detail||'error'); }
+  return r.status===204 ? null : r.json(); }
+
+/* ---------------- 标签页切换 ---------------- */
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  ['dash','relays','questions','settings'].forEach(t =>
+    $('tab-'+t).classList.toggle('hidden', t !== b.dataset.tab));
+  if(b.dataset.tab==='relays') loadRelays();
+  if(b.dataset.tab==='questions') loadQuestions();
+  if(b.dataset.tab==='settings') loadSettings();
+});
+
+/* ---------------- 仪表盘 ---------------- */
+/** 加载某天详情：状态表 + 推荐卡 + 走势图 */
+async function loadDay(){
+  const date = $('daySel').value;
+  if(!date) return;
+  const d = await api('/api/day/'+date);
+  // 推荐卡
+  const box = $('recoBox');
+  if(d.best){ box.classList.remove('hidden'); box.style.borderColor = ''; box.style.background = '';
+    box.innerHTML = `<i data-lucide="badge-check"></i><div><b>今日推荐 ${d.best.label}</b><div class="muted" style="color:inherit;margin-top:3px">综合得分 ${d.best.score} · ${d.best.status}${d.note}</div></div>`;
+  } else if(d.rows.length){ box.classList.remove('hidden');
+    box.style.borderColor = 'rgba(215,0,21,.18)'; box.style.background = 'rgba(255,235,237,.9)';
+    box.innerHTML = `<i data-lucide="octagon-alert"></i><div><b>今日暂无推荐</b><div class="muted" style="color:inherit;margin-top:3px">${d.note || '所有站点评测异常'}</div></div>`;
+  } else box.classList.add('hidden');
+  renderMetrics(d);
+  // 详情表
+  const cls = s => (s==='疑似掺水'||s==='评测异常') ? 'bad' : (s==='正常' ? 'ok' : 'warn');
+  const stIcon = s => s==='疑似掺水' ? 'circle-x' : (s==='正常' ? 'circle-check'
+    : (s==='评测异常' ? 'circle-alert' : 'eye'));
+  const evIcon = e => e.includes('异常') ? 'octagon-alert' : e.includes('新增') ? 'triangle-alert'
+    : e.includes('恢复') ? 'trending-up' : e.includes('持续') ? 'trending-down'
+    : e.includes('稳定') ? 'circle-check' : 'clock';
+  let html = `<tr><th>站点</th><th>模型 ID</th><th>今日分数</th><th>基线</th><th>差值</th><th>通过题数</th>
+    <th>次数</th><th>平均延迟</th><th>状态</th><th>事件</th></tr>`;
+  if(!d.rows.length) html += `<tr><td colspan="10" class="muted">该日期暂无数据，点击「立即评测」生成</td></tr>`;
+  d.rows.forEach(r => {
+    const scoreCell = r.score===null ? '<span class="warn">未计分</span>' : r.score;
+    // 次数列：多次评测可展开查看每次明细
+    const cntCell = (r.run_count>1)
+      ? `<a href="javascript:void(0)" onclick="toggleRuns('${r.name}')" style="font-size:12px">
+           <i data-lucide="${expandedStations.has(r.name)?'chevron-down':'chevron-right'}"></i>${r.run_count} 次</a>`
+      : (r.run_count===1 ? '1 次' : '—');
+    const models = (r.model_ids||[]).map(m=>`<span class="model-chip" title="${m}">${m}</span>`).join(' ');
+    html += `<tr><td><b>${r.label}</b><div class="muted">${r.name}</div></td><td>${models||'未记录'}</td><td>${scoreCell}</td><td>${r.baseline ?? '—'}</td>
+      <td>${r.diff===null?'—':(r.diff>0?'+':'')+r.diff}</td><td>${r.passed}/${r.total}</td>
+      <td>${cntCell}</td><td>${Math.round(r.latency)} ms</td>
+      <td class="${cls(r.status)}"><span class="status-pill"><i data-lucide="${stIcon(r.status)}"></i>${r.status}</span></td>
+      <td class="${cls(r.status)}" ${r.error_detail?`title="${r.error_detail}"`:''}>
+        <i data-lucide="${evIcon(r.event)}"></i>${r.event}</td></tr>`;
+    // 展开行：每次评测明细
+    if(expandedStations.has(r.name) && r.runs && r.runs.length){
+      r.runs.forEach((run, i) => {
+        const sc = run.score===null ? '<span class="warn">未计分</span>' : run.score;
+        const err = run.error ? `<span class="warn" title="${run.error}">${run.error.slice(0,30)}</span>` : '';
+        html += `<tr class="detail-row">
+          <td><span class="detail-label"><i data-lucide="corner-down-right"></i>第${i+1}次 ${run.time}</span></td>
+          <td><span class="model-chip" title="${run.model_id}">${run.model_id}</span></td>
+          <td>${sc}</td><td class="muted">—</td><td class="muted">—</td>
+          <td>${run.passed}/${run.total}</td><td class="muted">—</td>
+          <td>${Math.round(run.latency||0)} ms</td><td colspan="2" class="muted" style="text-align:left">${err}</td></tr>`;
+      });
+    }
+  });
+  $('dayTable').innerHTML = html;
+  refreshIcons();
+  drawTrend(d.trends);
+}
+
+/** 渲染当日核心指标卡片 */
+function renderMetrics(d){
+  const rows = d.rows || [];
+  const valid = rows.filter(r=>r.score!==null);
+  const avg = valid.length ? (valid.reduce((sum,r)=>sum+r.score,0)/valid.length).toFixed(1) : '—';
+  const normal = rows.filter(r=>r.status==='正常').length;
+  const totalRuns = rows.reduce((sum,r)=>sum+(r.run_count||0),0);
+  const latencyRows = rows.filter(r=>r.latency>0);
+  const latency = latencyRows.length
+    ? Math.round(latencyRows.reduce((sum,r)=>sum+r.latency,0)/latencyRows.length)+' ms' : '—';
+  const cards = [
+    ['gauge',avg,'站点平均分','#e8f3ff','#0071e3','rgba(0,113,227,.12)'],
+    ['shield-check',`${normal}/${rows.length}`,'正常站点','#eaf8ee','#248a3d','rgba(36,138,61,.12)'],
+    ['history',totalRuns,'当日评测次数','#f3edff','#8944ab','rgba(137,68,171,.12)'],
+    ['timer',latency,'平均响应延迟','#fff4e8','#b25000','rgba(178,80,0,.12)'],
+  ];
+  $('metricGrid').innerHTML = cards.map(c=>`<div class="metric" style="--tone:${c[3]};--accent:${c[4]};--glow:${c[5]}">
+    <div class="metric-icon"><i data-lucide="${c[0]}"></i></div><div class="metric-value">${c[1]}</div><div class="metric-label">${c[2]}</div></div>`).join('');
+}
+
+/** 渲染多站分数走势折线图 */
+function drawTrend(trends){
+  const names = Object.keys(trends);
+  if(!names.length){ if(trendChart) trendChart.destroy(); return; }
+  const dates = [...new Set(names.flatMap(n => trends[n].points.map(p=>p[0])))].sort();
+  const datasets = names.map((n,i) => ({
+    label: trends[n].label,
+    data: dates.map(dt => { const p = trends[n].points.find(x=>x[0]===dt); return p ? p[1] : null; }),
+    borderColor: ['#0071e3','#ff3b30','#248a3d','#ff9500','#af52de','#ff2d55'][i%6],
+    backgroundColor: ['#0071e3','#ff3b30','#248a3d','#ff9500','#af52de','#ff2d55'][i%6],
+    spanGaps: true, tension: .38, borderWidth:2.2, pointRadius:2.5, pointHoverRadius:6,
+  }));
+  if(trendChart) trendChart.destroy();
+  if(window.Chart){
+    trendChart = new Chart($('trendChart'), {
+      type:'line',
+      data:{ labels:dates, datasets },
+      options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+        plugins:{legend:{position:'top',align:'end',labels:{usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:18,color:'#6e6e73',font:{size:11}}},
+          tooltip:{backgroundColor:'rgba(29,29,31,.9)',padding:12,cornerRadius:10,titleFont:{size:12},bodyFont:{size:12}}},
+        scales:{x:{grid:{display:false},border:{display:false},ticks:{color:'#86868b',font:{size:10}}},
+          y:{min:0,max:100,border:{display:false},grid:{color:'rgba(0,0,0,.055)'},ticks:{color:'#86868b',font:{size:10},stepSize:20}}} },
+    });
+  }
+}
+
+/** 初始化日期下拉并加载最新一天 */
+async function initDash(){
+  const days = await api('/api/days');
+  $('daySel').innerHTML = days.length
+    ? days.map(d=>`<option>${d}</option>`).join('')
+    : `<option value="">（暂无数据）</option>`;
+  loadDay();
+  // 恢复运行中状态显示
+  const st = await api('/api/run/status');
+  if(st.running) watchRun();
+}
+
+/** 新窗口打开当日 HTML 日报 */
+function openReport(){
+  const d = $('daySel').value; if(!d) return toast('该日期没有日报');
+  window.open('/api/report/'+d, '_blank');
+}
+
+/* ---------------- 评测触发与进度 ---------------- */
+/** 手动触发评测（relays 为空=全部；传名字数组=指定站点） */
+async function triggerRun(relays){
+  const body = relays && relays.length ? {relays} : {};
+  const r = await api('/api/run', {method:'POST', body:JSON.stringify(body)});
+  toast(r.msg);
+  if(r.ok){
+    // 切到仪表盘查看实时进度
+    document.querySelector('nav button[data-tab="dash"]').click();
+    watchRun();
+  }
+}
+
+/** 测试勾选中的站点 */
+async function testSelected(){
+  const names = [...document.querySelectorAll('.cb-rel:checked')].map(c => c.value);
+  if(!names.length) return toast('请先勾选要测试的站点');
+  triggerRun(names);
+}
+
+/** 暂停评测 */
+async function pauseRun(){
+  const r = await api('/api/run/pause', {method:'POST'});
+  toast(r.msg);
+}
+
+/** 继续评测 */
+async function resumeRun(){
+  const r = await api('/api/run/resume', {method:'POST'});
+  toast(r.msg);
+}
+
+/** 强制停止评测 */
+async function stopRun(){
+  if(!confirm('确定强制停止当前评测？已完成的站点分数保留，未完成的放弃。')) return;
+  const r = await api('/api/run/stop', {method:'POST'});
+  toast(r.msg);
+}
+
+/** 轮询评测进度：滚动日志 + 暂停态切换 + 完成后刷新仪表盘 */
+function watchRun(){
+  $('runCard').classList.remove('hidden');
+  $('runCtl').classList.remove('hidden');
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const st = await api('/api/run/status');
+    $('runlog').textContent = st.log.join('\n');
+    $('runlog').scrollTop = 1e9;
+    // 暂停/运行状态切换
+    if(st.running && st.paused){
+      $('runState').innerHTML = '<i data-lucide="pause"></i> 已暂停';
+      $('btnPause').classList.add('hidden');
+      $('btnResume').classList.remove('hidden');
+    } else if(st.running){
+      $('runState').innerHTML = '<i data-lucide="loader-circle" class="spin"></i> 评测进行中…';
+      $('btnPause').classList.remove('hidden');
+      $('btnResume').classList.add('hidden');
+    }
+    refreshIcons();
+    if(!st.running){
+      clearInterval(pollTimer);
+      $('runState').innerHTML = '<i data-lucide="circle-check"></i> 评测结束';
+      $('runCtl').classList.add('hidden');
+      refreshIcons();
+      toast('评测结束');
+      initDash();
+      if(!$('tab-relays').classList.contains('hidden')) loadRelays();
+    }
+  }, 1500);
+}
+
+/* ---------------- 中转站管理 ---------------- */
+/** 渲染中转站列表 */
+async function loadRelays(){
+  const relays = await api('/api/relays');
+  let html = `<tr><th>选</th><th>名称</th><th>标识</th><th>协议</th><th>Base URL</th><th>模型</th>
+    <th>API Key</th><th>状态</th><th>操作</th></tr>`;
+  if(!relays.length) html += `<tr><td colspan="9" class="muted">暂无中转站，点击右上角新增</td></tr>`;
+  relays.forEach(r => {
+    html += `<tr><td><input type="checkbox" class="cb-rel" value="${r.name}" style="width:auto"></td>
+      <td>${r.label}</td><td>${r.name}</td>
+      <td>${r.protocol==='anthropic'?'Anthropic':'OpenAI'}</td>
+      <td style="max-width:220px;word-break:break-all">${r.baseUrl}</td><td>${r.model}</td>
+      <td class="muted">${r.apiKey}</td>
+      <td class="${r.enabled?'ok':'warn'}"><i data-lucide="${r.enabled?'circle-check':'circle-off'}"></i>${r.enabled?'启用':'停用'}</td>
+      <td><button class="btn btn-sm" onclick="triggerRun(['${r.name}'])"><i data-lucide="play"></i>测试</button>
+        <button class="btn btn-sm" onclick="openRelayDialog('${r.name}')"><i data-lucide="pencil"></i>编辑</button>
+        <button class="btn btn-sm btn-danger" onclick="delRelay('${r.name}')"><i data-lucide="trash-2"></i>删除</button></td></tr>`;
+  });
+  $('relayTable').innerHTML = html;
+  refreshIcons();
+}
+
+/** 打开中转站编辑弹窗（name 为空=新增） */
+async function openRelayDialog(name){
+  editingRelay = name || null;
+  $('relayDlgTitle').textContent = name ? '编辑中转站' : '新增中转站';
+  if(name){
+    const r = (await api('/api/relays')).find(x=>x.name===name);
+    $('r_label').value=r.label; $('r_name').value=r.name; $('r_protocol').value=r.protocol;
+    $('r_baseUrl').value=r.baseUrl; $('r_model').value=r.model; $('r_apiKey').value='';
+  } else {
+    ['r_label','r_name','r_baseUrl','r_model','r_apiKey'].forEach(i=>$(i).value='');
+    $('r_protocol').value='openai';
+  }
+  relayDlg.showModal();
+}
+
+/** 保存中转站（新增或更新） */
+async function saveRelay(){
+  const body = {
+    label:$('r_label').value.trim(), name:$('r_name').value.trim(),
+    protocol:$('r_protocol').value, baseUrl:$('r_baseUrl').value.trim(),
+    apiKey:$('r_apiKey').value.trim(), model:$('r_model').value.trim(), enabled:true,
+  };
+  if(!body.label || !body.name || !body.baseUrl || !body.model)
+    return toast('名称、标识、Base URL、模型为必填项');
+  if(!editingRelay && !body.apiKey) return toast('新增时 API Key 必填');
+  try{
+    await api(editingRelay ? '/api/relays/'+editingRelay : '/api/relays',
+      {method: editingRelay?'PUT':'POST', body:JSON.stringify(body)});
+    relayDlg.close(); toast('已保存'); loadRelays();
+  }catch(e){ toast('保存失败：'+e.message); }
+}
+
+/** 删除中转站（二次确认） */
+async function delRelay(name){
+  if(!confirm(`确定删除中转站「${name}」吗？（历史数据保留）`)) return;
+  await api('/api/relays/'+name, {method:'DELETE'});
+  toast('已删除'); loadRelays();
+}
+
+/* ---------------- 题库 ---------------- */
+/** 渲染题库列表 + 版本表 + 数据源下拉框 */
+async function loadQuestions(){
+  const [qs, ds, vers] = await Promise.all([
+    api('/api/questions'), api('/api/datasets'), api('/api/questions/versions')]);
+  $('qCount').textContent = qs.length;
+  if(!$('dsSource').options.length){
+    $('dsSource').innerHTML = ds.map(d => `<option value="${d.id}">${d.label}</option>`).join('');
+  }
+  // 版本表
+  let vh = `<tr><th>版本</th><th>来源</th><th>题数</th><th>创建时间</th><th>状态</th><th>操作</th></tr>`;
+  if(!vers.length) vh += `<tr><td colspan="6" class="muted">暂无版本</td></tr>`;
+  vers.forEach(v => {
+    vh += `<tr><td>#${v.id} ${v.label}</td><td>${v.source}</td><td>${v.count}</td>
+      <td>${v.created_at.replace('T',' ')}</td>
+      <td class="${v.active?'ok':'muted'}"><i data-lucide="${v.active?'circle-check':'circle'}"></i>${v.active?'使用中':'归档'}</td>
+      <td>${v.active ? '<span class="muted">—</span>' :
+        `<button class="btn btn-sm" onclick="activateVer(${v.id})"><i data-lucide="rotate-ccw"></i>恢复此版本</button>
+         <button class="btn btn-sm btn-danger" onclick="delVer(${v.id})"><i data-lucide="trash-2"></i>删除</button>`}</td></tr>`;
+  });
+  $('verTable').innerHTML = vh;
+  // 题目表（仅活动版本）
+  let html = `<tr><th>#</th><th>题目</th><th>标准答案</th><th>操作</th></tr>`;
+  if(!qs.length) html += `<tr><td colspan="4" class="muted">题库为空，请从上方抽样生成新版本</td></tr>`;
+  qs.forEach(q => {
+    html += `<tr><td>${q.id}</td><td style="text-align:left">${q.q}</td>
+      <td>${q.answer}</td>
+      <td><button class="btn btn-sm btn-danger" onclick="delQ(${q.id})"><i data-lucide="trash-2"></i>删除</button></td></tr>`;
+  });
+  $('qTable').innerHTML = html;
+  refreshIcons();
+}
+
+/** 恢复历史题库版本为使用中 */
+async function activateVer(id){
+  if(!confirm(`恢复版本 #${id} 为当前使用版本？（当前版本会自动归档，可再切回）`)) return;
+  await api(`/api/questions/versions/${id}/activate`, {method:'POST'});
+  toast('已恢复该版本');
+  loadQuestions();
+}
+
+/** 删除归档版本 */
+async function delVer(id){
+  if(!confirm(`确定删除版本 #${id}？其题目将一并删除，不可恢复。`)) return;
+  await api(`/api/questions/versions/${id}`, {method:'DELETE'});
+  toast('版本已删除');
+  loadQuestions();
+}
+
+/** 从开源数据集抽样，生成新版本并设为使用中 */
+async function importDataset(){
+  const source = $('dsSource').value, count = +$('dsCount').value || 100;
+  const btn = $('dsBtn');
+  if(!confirm(`将从开源数据集抽样 ${count} 题生成【新版本】并启用，旧版本保留可恢复。确定？`)) return;
+  btn.disabled = true; btn.innerHTML = '<i data-lucide="loader-circle" class="spin"></i>下载中…';
+  refreshIcons();
+  try{
+    const r = await api('/api/questions/import',
+      {method:'POST', body:JSON.stringify({source, count, replace:true})});
+    toast(`新版本 #${r.version_id} 已生成并启用（${r.imported} 题），旧版本已归档`);
+    loadQuestions();
+  }catch(e){
+    toast('导入失败：'+e.message);
+  }finally{
+    btn.disabled = false; btn.innerHTML = '<i data-lucide="download"></i>抽样并生成新版本';
+    refreshIcons();
+  }
+}
+
+/** 保存新题目 */
+async function saveQuestion(){
+  const body = { q:$('q_q').value.trim(), answer:$('q_answer').value.trim() };
+  if(!body.q || !body.answer) return toast('题目和答案都必填');
+  await api('/api/questions', {method:'POST', body:JSON.stringify(body)});
+  qDlg.close(); toast('已添加'); loadQuestions();
+}
+
+/** 删除题目 */
+async function delQ(id){
+  if(!confirm('确定删除这道题吗？')) return;
+  await api('/api/questions/'+id, {method:'DELETE'});
+  loadQuestions();
+}
+
+/* ---------------- 设置 ---------------- */
+/** 读取并回填设置表单 */
+async function loadSettings(){
+  const s = await api('/api/settings');
+  $('s_enabled').checked = s.schedule_enabled;
+  $('s_time').value = s.schedule_time;
+  $('s_baseline').value = s.baseline_days;
+  $('s_minhist').value = s.min_history_days;
+  $('s_drop').value = s.drop_threshold;
+  $('s_tokens').value = s.max_tokens;
+  $('s_conc').value = s.concurrency;
+  $('s_conc_fb').value = s.concurrency_fallback;
+  $('s_par').value = s.station_parallel;
+}
+
+/** 保存设置 */
+async function saveSettings(){
+  const body = {
+    schedule_enabled:$('s_enabled').checked, schedule_time:$('s_time').value||'09:00',
+    baseline_days:+$('s_baseline').value||7, min_history_days:+$('s_minhist').value||3,
+    drop_threshold:+$('s_drop').value||8, max_tokens:+$('s_tokens').value||512,
+    concurrency:+$('s_conc').value||5, concurrency_fallback:1,
+    station_parallel:+$('s_par').value||10,
+  };
+  await api('/api/settings', {method:'PUT', body:JSON.stringify(body)});
+  toast('设置已保存');
+}
+
+/* ---------------- 启动 ---------------- */
+refreshIcons();
+initDash();
+</script>
+</body>
+</html>

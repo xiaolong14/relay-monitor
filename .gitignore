@@ -1,0 +1,29 @@
+# ===== 用户数据（含 API Key 与历史成绩，严禁提交） =====
+data/
+generated/
+reports/
+logs/
+
+# ===== 构建产物 =====
+node_modules/
+__pycache__/
+*.pyc
+build-desktop/
+desktop-dist/
+dist/
+build/
+*.zip
+
+# ===== 内嵌运行时（打包 EXE 时自动下载，勿提交） =====
+node_runtime/
+
+# ===== 运行环境 =====
+.venv/
+venv/
+
+# ===== 数据集本地缓存（首次导入后生成） =====
+data/*.json
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db

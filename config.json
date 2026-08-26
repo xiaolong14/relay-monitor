@@ -1,0 +1,46 @@
+{
+  "relays": [
+    {
+      "name": "relay-a",
+      "label": "A站",
+      "protocol": "openai",
+      "baseUrl": "https://relay-a.example.com/v1",
+      "apiKey": "sk-替换成A站的KEY",
+      "model": "gpt-4o"
+    },
+    {
+      "name": "relay-b",
+      "label": "B站",
+      "protocol": "openai",
+      "baseUrl": "https://relay-b.example.com/v1",
+      "apiKey": "sk-替换成B站的KEY",
+      "model": "gpt-4o"
+    },
+    {
+      "name": "relay-c",
+      "label": "C站",
+      "protocol": "openai",
+      "baseUrl": "https://relay-c.example.com/v1",
+      "apiKey": "sk-替换成C站的KEY",
+      "model": "gpt-4o"
+    }
+  ],
+  "settings": {
+    "baseline_days": 7,
+    "min_history_days": 3,
+    "drop_threshold": 8,
+    "max_tokens": 512
+  },
+  "questions": [
+    { "q": "计算 17×23-45，只输出最终数字，不要写任何其他内容", "answer": "346" },
+    { "q": "计算 2 的 10 次方等于多少？只输出数字", "answer": "1024" },
+    { "q": "计算 129 除以 3 等于多少？只输出数字", "answer": "43" },
+    { "q": "从 1 一直加到 10 等于多少？只输出数字", "answer": "55" },
+    { "q": "用中文回答：澳大利亚的首都是哪座城市？只输出城市名", "answer": "堪培拉" },
+    { "q": "用中文回答：中国最长的河流是哪条？只输出河名", "answer": "长江" },
+    { "q": "用中文回答：HTML 是什么的缩写？只输出中文全称", "answer": "超文本标记语言" },
+    { "q": "在标准大气压下，水的沸点是摄氏多少度？只输出数字", "answer": "100" },
+    { "q": "把 Hello World 翻译成中文，只输出译文", "answer": "你好世界" },
+    { "q": "请严格按格式回复，只输出两个大写字母：OK", "answer": "OK" }
+  ]
+}

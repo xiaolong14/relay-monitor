@@ -1,0 +1,122 @@
+[
+  {
+    "q": "Find the number of subsets of $\\{1,2,3,\\ldots,10\\}$ that contain exactly one pair of consecutive integers. Examples of such subsets are $\\{\\mathbf{1},\\mathbf{2},5\\}$ and $\\{1,3,\\mathbf{6},\\mathbf{7},10\\}.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "235"
+  },
+  {
+    "q": "Let ABCDEF be a convex equilateral hexagon in which all pairs of opposite sides are parallel. The triangle whose sides are extensions of segments AB, CD, and EF has side lengths 200, 240, and 300. Find the side length of the hexagon.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "080"
+  },
+  {
+    "q": "In $\\triangle ABC$ with side lengths $AB = 13,$ $BC = 14,$ and $CA = 15,$ let $M$ be the midpoint of $\\overline{BC}.$ Let $P$ be the point on the circumcircle of $\\triangle ABC$ such that $M$ is on $\\overline{AP}.$ There exists a unique point $Q$ on segment $\\overline{AM}$ such that $\\angle PBQ = \\angle PCQ.$ Then $AQ$ can be written as $\\frac{m}{\\sqrt{n}},$ where $m$ and $n$ are relatively prime positive integers. Find $m+n.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "247"
+  },
+  {
+    "q": "Alice and Bob play the following game. A stack of $n$ tokens lies before them. The players take turns with Alice going first. On each turn, the player removes either $1$ token or $4$ tokens from the stack. Whoever removes the last token wins. Find the number of positive integers $n$ less than or equal to $2024$ for which there exists a strategy for Bob that guarantees that Bob will win the game regardless of Alice's play.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "809"
+  },
+  {
+    "q": "Let $\\ell_A$ and $\\ell_B$ be two distinct parallel lines. For positive integers $m$ and $n$, distinct points $A_1, A_2, \\allowbreak A_3, \\allowbreak \\ldots, \\allowbreak A_m$ lie on $\\ell_A$, and distinct points $B_1, B_2, B_3, \\ldots, B_n$ lie on $\\ell_B$. Additionally, when segments $\\overline{A_iB_j}$ are drawn for all $i=1,2,3,\\ldots, m$ and $j=1,\\allowbreak 2,\\allowbreak 3, \\ldots, \\allowbreak n$, no point strictly between $\\ell_A$ and $\\ell_B$ lies on more than 1 of the segments. Find the number of bounded regions into which this figure divides the plane when $m=7$ and $n=5$. The figure shows that there are 8 regions when $m=3$ and $n=2$.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "244"
+  },
+  {
+    "q": "Find the number of triples of nonnegative integers \\((a,b,c)\\) satisfying \\(a + b + c = 300\\) and\n\\begin{equation*}\na^2b + a^2c + b^2a + b^2c + c^2a + c^2b = 6,000,000.\n\\end{equation*}\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "601"
+  },
+  {
+    "q": "A circle with radius $6$ is externally tangent to a circle with radius $24$. Find the area of the triangular region bounded by the three common tangent lines of these two circles.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "192"
+  },
+  {
+    "q": "A plane contains $40$ lines, no $2$ of which are parallel. Suppose that there are $3$ points where exactly $3$ lines intersect, $4$ points where exactly $4$ lines intersect, $5$ points where exactly $5$ lines intersect, $6$ points where exactly $6$ lines intersect, and no points where more than $6$ lines intersect. Find the number of points where exactly $2$ lines intersect.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "607"
+  },
+  {
+    "q": "Let $x,y$ and $z$ be positive real numbers that satisfy the following system of equations:\n\\[\\log_2\\left({x \\over yz}\\right) = {1 \\over 2}\\]\\[\\log_2\\left({y \\over xz}\\right) = {1 \\over 3}\\]\\[\\log_2\\left({z \\over xy}\\right) = {1 \\over 4}\\]\nThen the value of $\\left|\\log_2(x^4y^3z^2)\\right|$ is $\\tfrac{m}{n}$ where $m$ and $n$ are relatively prime positive integers. Find $m+n$.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "033"
+  },
+  {
+    "q": "Find the number of ways to place a digit in each cell of a 2x3 grid so that the sum of the two numbers formed by reading left to right is $999$, and the sum of the three numbers formed by reading top to bottom is $99$. The grid below is an example of such an arrangement because $8+991=999$ and $9+9+81=99$.\n\\[\\begin{array}{|c|c|c|} \\hline 0 & 0 & 8 \\\\ \\hline 9 & 9 & 1 \\\\ \\hline \\end{array}\\]\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "045"
+  },
+  {
+    "q": "Let $\\omega\\neq 1$ be a 13th root of unity. Find the remainder when\n\\[\\prod_{k=0}^{12}(2-2\\omega^k+\\omega^{2k})\\]\nis divided by 1000.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "321"
+  },
+  {
+    "q": "Let $S$ be the set of all positive rational numbers $r$ such that when the two numbers $r$ and $55r$ are written as fractions in lowest terms, the sum of the numerator and denominator of one fraction is the same as the sum of the numerator and denominator of the other fraction. The sum of all the elements of $S$ can be expressed in the form $\\frac{p}{q},$ where $p$ and $q$ are relatively prime positive integers. Find $p+q.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "719"
+  },
+  {
+    "q": "A cube-shaped container has vertices $A,$ $B,$ $C,$ and $D,$ where $\\overline{AB}$ and $\\overline{CD}$ are parallel edges of the cube, and $\\overline{AC}$ and $\\overline{BD}$ are diagonals of faces of the cube, as shown. Vertex $A$ of the cube is set on a horizontal plane $\\mathcal{P}$ so that the plane of the rectangle $ABDC$ is perpendicular to $\\mathcal{P},$ vertex $B$ is $2$ meters above $\\mathcal{P},$ vertex $C$ is $8$ meters above $\\mathcal{P},$ and vertex $D$ is $10$ meters above $\\mathcal{P}.$ The cube contains water whose surface is parallel to $\\mathcal{P}$ at a height of $7$ meters above $\\mathcal{P}.$ The volume of water is $\\frac{m}{n}$ cubic meters, where $m$ and $n$ are relatively prime positive integers. Find $m+n.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "751"
+  },
+  {
+    "q": "Each vertex of a regular dodecagon ($12$-gon) is to be colored either red or blue, and thus there are $2^{12}$ possible colorings. Find the number of these colorings with the property that no four vertices colored the same color are the four vertices of a rectangle.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "928"
+  },
+  {
+    "q": "There is a polynomial $P(x)$ with integer coefficients such that\\[P(x)=\\frac{(x^{2310}-1)^6}{(x^{105}-1)(x^{70}-1)(x^{42}-1)(x^{30}-1)}\\]holds for every $0<x<1.$ Find the coefficient of $x^{2022}$ in $P(x)$.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "220"
+  },
+  {
+    "q": "Let $x,y,$ and $z$ be real numbers satisfying the system of equations\n\\begin{align*} xy + 4z &= 60 \\\\ yz + 4x &= 60 \\\\ zx + 4y &= 60. \\end{align*}\nLet $S$ be the set of possible values of $x.$ Find the sum of the squares of the elements of $S.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "273"
+  },
+  {
+    "q": "Each vertex of a regular octagon is independently colored either red or blue with equal probability. The probability that the octagon can then be rotated so that all of the blue vertices end up at positions where there were originally red vertices is $\\tfrac{m}{n}$, where $m$ and $n$ are relatively prime positive integers. What is $m+n$?\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "371"
+  },
+  {
+    "q": "Adults made up $\\frac5{12}$ of the crowd of people at a concert. After a bus carrying $50$ more people arrived, adults made up $\\frac{11}{25}$ of the people at the concert. Find the minimum number of adults who could have been at the concert after the bus arrived.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "154"
+  },
+  {
+    "q": "Quadratic polynomials $P(x)$ and $Q(x)$ have leading coefficients $2$ and $-2,$ respectively. The graphs of both polynomials pass through the two points $(16,54)$ and $(20,53).$ Find $P(0) + Q(0).$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "116"
+  },
+  {
+    "q": "The numbers of apples growing on each of six apple trees form an arithmetic sequence where the greatest number of apples growing on any of the six trees is double the least number of apples growing on any of the six trees. The total number of apples growing on all six trees is $990.$ Find the greatest number of apples growing on any of the six trees.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "220"
+  },
+  {
+    "q": "Circles $\\omega_1$ and $\\omega_2$ intersect at two points $P$ and $Q,$ and their common tangent line closer to $P$ intersects $\\omega_1$ and $\\omega_2$ at points $A$ and $B,$ respectively. The line parallel to $AB$ that passes through $P$ intersects $\\omega_1$ and $\\omega_2$ for the second time at points $X$ and $Y,$ respectively. Suppose $PX=10,$ $PY=14,$ and $PQ=5.$ Then the area of trapezoid $XABY$ is $m\\sqrt{n},$ where $m$ and $n$ are positive integers and $n$ is not divisible by the square of any prime. Find $m+n.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "033"
+  },
+  {
+    "q": "Let $P$ be a point on the circle circumscribing square $ABCD$ that satisfies $PA \\cdot PC = 56$ and $PB \\cdot PD = 90.$ Find the area of $ABCD.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "106"
+  },
+  {
+    "q": "Let $\\triangle ABC$ be an isosceles triangle with $\\angle A = 90^\\circ.$ There exists a point $P$ inside $\\triangle ABC$ such that $\\angle PAB = \\angle PBC = \\angle PCA$ and $AP = 10.$ Find the area of $\\triangle ABC.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "250"
+  },
+  {
+    "q": "Azar, Carl, Jon, and Sergey are the four players left in a singles tennis tournament. They are randomly assigned opponents in the semifinal matches, and the winners of those matches play each other in the final match to determine the winner of the tournament. When Azar plays Carl, Azar will win the match with probability $\\frac23$. When either Azar or Carl plays either Jon or Sergey, Azar or Carl will win the match with probability $\\frac34$. Assume that outcomes of different matches are independent. The probability that Carl will win the tournament is $\\frac{p}{q}$, where $p$ and $q$ are relatively prime positive integers. Find $p+q$.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "125"
+  },
+  {
+    "q": "Let $\\triangle ABC$ be an equilateral triangle with side length $55.$ Points $D,$ $E,$ and $F$ lie on $\\overline{BC},$ $\\overline{CA},$ and $\\overline{AB},$ respectively, with $BD = 7,$ $CE=30,$ and $AF=40.$ Point $P$ inside $\\triangle ABC$ has the property that \\[\\angle AEP = \\angle BFP = \\angle CDP.\\] Find $\\tan^2(\\angle AEP).$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "075"
+  },
+  {
+    "q": "Alice knows that $3$ red cards and $3$ black cards will be revealed to her one at a time in random order. Before each card is revealed, Alice must guess its color. If Alice plays optimally, the expected number of cards she will guess correctly is $\\frac{m}{n},$ where $m$ and $n$ are relatively prime positive integers. Find $m+n.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "051"
+  },
+  {
+    "q": "Let $x,$ $y,$ and $z$ be positive real numbers satisfying the system of equations:\n\\begin{align*} \\sqrt{2x-xy} + \\sqrt{2y-xy} &= 1 \\\\ \\sqrt{2y-yz} + \\sqrt{2z-yz} &= \\sqrt2 \\\\ \\sqrt{2z-zx} + \\sqrt{2x-zx} &= \\sqrt3. \\end{align*} \nThen $\\left[ (1-x)(1-y)(1-z) \\right]^2$ can be written as $\\frac{m}{n},$ where $m$ and $n$ are relatively prime positive integers. Find $m+n.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "033"
+  },
+  {
+    "q": "Given $\\triangle ABC$ and a point $P$ on one of its sides, call line $\\ell$ the $\\textit{splitting line}$ of $\\triangle ABC$ through $P$ if $\\ell$ passes through $P$ and divides $\\triangle ABC$ into two polygons of equal perimeter. Let $\\triangle ABC$ be a triangle where $BC = 219$ and $AB$ and $AC$ are positive integers. Let $M$ and $N$ be the midpoints of $\\overline{AB}$ and $\\overline{AC},$ respectively, and suppose that the splitting lines of $\\triangle ABC$ through $M$ and $N$ intersect at $30^\\circ.$ Find the perimeter of $\\triangle ABC.$\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "459"
+  },
+  {
+    "q": "Let $ABCD$ be a tetrahedron such that $AB=CD= \\sqrt{41}$, $AC=BD= \\sqrt{80}$, and $BC=AD= \\sqrt{89}$. There exists a point $I$ inside the tetrahedron such that the distances from $I$ to each of the faces of the tetrahedron are all equal. This distance can be written in the form $\\frac{m \\sqrt n}{p}$, where $m$, $n$, and $p$ are positive integers, $m$ and $p$ are relatively prime, and $n$ is not divisible by the square of any prime. Find $m+n+p$.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "104"
+  },
+  {
+    "q": "A straight river that is $264$ meters wide flows from west to east at a rate of $14$ meters per minute. Melanie and Sherry sit on the south bank of the river with Melanie a distance of $D$ meters downstream from Sherry. Relative to the water, Melanie swims at $80$ meters per minute, and Sherry swims at $60$ meters per minute. At the same time, Melanie and Sherry begin swimming in straight lines to a point on the north bank of the river that is equidistant from their starting positions. The two women arrive at this point simultaneously. Find $D$.\n请推理后只输出最终的整数答案（0-999），不要输出任何其他内容。",
+    "answer": "550"
+  }
+]
