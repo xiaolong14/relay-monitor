@@ -75,6 +75,9 @@ Relay Monitor 把这三件事打包成一个可以长期挂着跑的 Web 系统�
 
 #### macOS
 
+> macOS 免安装版需要在 Mac 上本地构建（仓库提供 `构建-macOS-APP.command` 一键脚本）。
+> 若 Releases 页面暂无 macOS 版本，请先用下方「方式二」源码方式运行。
+
 1. 下载 `RelayMonitor-macOS.zip` 并解压
 2. 将 `RelayMonitor.app` 拖入「应用程序」文件夹后打开
 3. 完成 —— 不需要安装 Python、Node.js 或任何其他东西
