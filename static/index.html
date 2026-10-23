@@ -4,34 +4,53 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>中转站质量监控系统</title>
+<script>
+// 首屏先应用已保存的主题，避免页面加载时出现一瞬间的亮色闪烁。
+const themeState = (() => {
+  const storageKey = 'relay-monitor-theme';
+  let saved = null;
+  try { saved = localStorage.getItem(storageKey); } catch (e) { /* 存储不可用时仍可在当前会话切换主题 */ }
+  const system = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  const selected = saved === 'dark' || saved === 'light' ? saved : null;
+  document.documentElement.dataset.theme = selected || (system?.matches ? 'dark' : 'light');
+  return {storageKey, selected, system};
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lucide@0.462.0/dist/umd/lucide.min.js"></script>
 <style>
-:root{--blue:#0071e3;--blue-hover:#0077ed;--green:#248a3d;--red:#d70015;--orange:#b25000;--ink:#1d1d1f;--sub:#6e6e73;--line:rgba(0,0,0,.08);--surface:rgba(255,255,255,.78);--bg:#f5f5f7;--shadow:0 20px 60px rgba(0,0,0,.07);--ease:cubic-bezier(.28,.11,.32,1)}
+:root{color-scheme:light;--blue:#0071e3;--blue-hover:#0077ed;--green:#248a3d;--red:#d70015;--orange:#b25000;--ink:#1d1d1f;--sub:#6e6e73;--line:rgba(0,0,0,.08);--surface:rgba(255,255,255,.78);--panel:#fff;--bg:#f5f5f7;--header-bg:rgba(250,250,252,.78);--input-bg:rgba(255,255,255,.85);--input-focus-bg:#fff;--table-head:rgba(246,246,248,.94);--table-bg:rgba(255,255,255,.45);--button-bg:#e8e8ed;--button-hover:#dedee3;--tag-bg:#ececf0;--chip-bg:#f0f0f2;--pill-bg:#f2f2f4;--row-hover:rgba(0,113,227,.025);--hero-start:#1d1d1f;--hero-end:#5c5c62;--card-border:rgba(255,255,255,.7);--modal-bg:rgba(250,250,252,.94);--overlay:rgba(0,0,0,.28);--chart-tooltip:rgba(29,29,31,.9);--shadow:0 20px 60px rgba(0,0,0,.07);--ease:cubic-bezier(.28,.11,.32,1)}
+[data-theme="dark"]{color-scheme:dark;--blue:#4da3ff;--blue-hover:#73b7ff;--green:#5dd27a;--red:#ff6b78;--orange:#ffb45b;--ink:#f5f5f7;--sub:#a1a1aa;--line:rgba(255,255,255,.12);--surface:rgba(30,31,37,.82);--panel:#1c1d22;--bg:#101114;--header-bg:rgba(20,21,26,.8);--input-bg:rgba(31,32,38,.9);--input-focus-bg:#27282f;--table-head:rgba(38,39,46,.95);--table-bg:rgba(27,28,33,.6);--button-bg:#2c2d34;--button-hover:#3b3c45;--tag-bg:#303139;--chip-bg:#292a31;--pill-bg:#2c2d34;--row-hover:rgba(77,163,255,.12);--hero-start:#f5f5f7;--hero-end:#a1a1aa;--card-border:rgba(255,255,255,.12);--modal-bg:rgba(29,30,36,.96);--overlay:rgba(0,0,0,.62);--chart-tooltip:rgba(8,9,13,.96);--shadow:0 20px 60px rgba(0,0,0,.32)}
+:root{--primary-ink:#fff;--danger-bg:#fff0f1;--danger-hover:#ffe3e5;--code-bg:#e8f3ff;--purple:#8944ab;--pink:#d72b66}
+[data-theme="dark"]{--primary-ink:#081b30;--danger-bg:#40252c;--danger-hover:#562d36;--code-bg:#20344b;--purple:#c58af9;--pink:#ff7aaf}
 *{box-sizing:border-box}
+:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
 html{scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
 body:before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 14% 5%,rgba(0,113,227,.09),transparent 27%),radial-gradient(circle at 88% 18%,rgba(175,82,222,.07),transparent 24%);z-index:-1}
-header{position:sticky;top:0;z-index:50;height:52px;padding:0 max(22px,calc((100vw - 1240px)/2));display:flex;align-items:center;gap:28px;background:rgba(250,250,252,.78);border-bottom:1px solid rgba(0,0,0,.06);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px)}
+header{position:sticky;top:0;z-index:50;height:52px;padding:0 max(22px,calc((100vw - 1240px)/2));display:flex;align-items:center;gap:28px;background:var(--header-bg);border-bottom:1px solid var(--line);backdrop-filter:saturate(180%) blur(22px);-webkit-backdrop-filter:saturate(180%) blur(22px)}
 header h1{display:flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:650;letter-spacing:-.2px;white-space:nowrap}
 header h1 .lucide{width:18px;height:18px;color:var(--blue)}
 nav{display:flex;align-items:center;height:100%;gap:2px}
-nav button{height:100%;padding:0 13px;border:0;background:transparent;color:#49494d;font-size:12px;cursor:pointer;transition:color .25s var(--ease),opacity .25s var(--ease)}
+nav button{height:100%;padding:0 13px;border:0;background:transparent;color:var(--sub);font-size:12px;cursor:pointer;transition:color .25s var(--ease),opacity .25s var(--ease)}
 nav button:hover{color:var(--blue)}
 nav button.active{color:var(--ink);font-weight:600}
 nav button.active:after{content:"";display:block;height:2px;margin-top:-2px;background:var(--ink);border-radius:2px}
+.header-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.theme-toggle{padding-inline:10px}
+.theme-toggle .theme-label{font-size:11px}
 main{max-width:1280px;margin:0 auto;padding:0 22px 80px}
 section{animation:reveal .55s var(--ease)}
 .hero{padding:72px 8px 38px;text-align:center}
 .eyebrow{margin:0 0 12px;color:var(--blue);font-size:14px;font-weight:650;letter-spacing:.2px}
-.hero h2{margin:0;font-size:clamp(36px,5vw,64px);line-height:1.04;letter-spacing:-2.8px;font-weight:700;background:linear-gradient(100deg,#1d1d1f 20%,#5c5c62 72%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero h2{margin:0;font-size:clamp(36px,5vw,64px);line-height:1.04;letter-spacing:-2.8px;font-weight:700;background:linear-gradient(100deg,var(--hero-start) 20%,var(--hero-end) 72%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .hero p{max-width:720px;margin:18px auto 0;color:var(--sub);font-size:18px;line-height:1.55;letter-spacing:-.25px}
-.card{position:relative;margin-bottom:22px;padding:26px 28px;background:var(--surface);border:1px solid rgba(255,255,255,.7);border-radius:24px;box-shadow:var(--shadow);backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);overflow:hidden;transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
+.card{position:relative;margin-bottom:22px;padding:26px 28px;background:var(--surface);border:1px solid var(--card-border);border-radius:24px;box-shadow:var(--shadow);backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);overflow:hidden;transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
 .card:hover{box-shadow:0 28px 75px rgba(0,0,0,.09)}
 .card h2{display:flex;align-items:center;gap:8px;margin:0 0 20px;font-size:18px;letter-spacing:-.35px}
-.toolbar{display:flex;align-items:center;gap:10px;padding:13px 16px;border-radius:18px;background:rgba(255,255,255,.7);box-shadow:0 10px 35px rgba(0,0,0,.05);border:1px solid rgba(255,255,255,.82);backdrop-filter:blur(20px)}
+.toolbar{display:flex;align-items:center;gap:10px;padding:13px 16px;border-radius:18px;background:var(--surface);box-shadow:0 10px 35px rgba(0,0,0,.05);border:1px solid var(--card-border);backdrop-filter:blur(20px)}
 .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:20px 0 22px}
-.metric{position:relative;min-height:142px;padding:21px 22px;border-radius:22px;background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.85);box-shadow:0 14px 38px rgba(0,0,0,.055);overflow:hidden;transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
+.metric{position:relative;min-height:142px;padding:21px 22px;border-radius:22px;background:var(--surface);border:1px solid var(--card-border);box-shadow:0 14px 38px rgba(0,0,0,.055);overflow:hidden;transition:transform .35s var(--ease),box-shadow .35s var(--ease)}
 .metric:hover{transform:translateY(-4px);box-shadow:0 22px 48px rgba(0,0,0,.09)}
 .metric:after{content:"";position:absolute;width:90px;height:90px;border-radius:50%;right:-28px;top:-30px;background:var(--glow,rgba(0,113,227,.1));filter:blur(2px)}
 .metric-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:var(--tone,#e8f3ff);color:var(--accent,var(--blue));margin-bottom:17px}
@@ -40,50 +59,76 @@ section{animation:reveal .55s var(--ease)}
 .metric-label{margin-top:8px;color:var(--sub);font-size:12px}
 .reco{display:flex;align-items:center;gap:15px;margin-bottom:22px;padding:18px 22px;border-radius:20px;color:#12672a;background:linear-gradient(135deg,rgba(225,250,231,.9),rgba(244,255,247,.86));border:1px solid rgba(36,138,61,.15);box-shadow:0 14px 38px rgba(36,138,61,.08);font-size:14px}
 .reco>.lucide{flex:none;width:22px;height:22px}
-.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.45)}
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px;background:var(--table-bg)}
 table{width:100%;border-collapse:separate;border-spacing:0}
-th,td{padding:14px 12px;border-bottom:1px solid rgba(0,0,0,.055);font-size:12px;text-align:center;white-space:nowrap}
-th{position:sticky;top:0;z-index:2;background:rgba(246,246,248,.94);color:var(--sub);font-weight:600;backdrop-filter:blur(12px)}
+th,td{padding:14px 12px;border-bottom:1px solid var(--line);font-size:12px;text-align:center;white-space:nowrap}
+th{position:sticky;top:0;z-index:2;background:var(--table-head);color:var(--sub);font-weight:600;backdrop-filter:blur(12px)}
 tr:last-child td{border-bottom:0}
 tr td{transition:background .2s var(--ease)}
-tr:hover td{background:rgba(0,113,227,.025)}
+tr:hover td{background:var(--row-hover)}
 .ok{color:var(--green);font-weight:600}.bad{color:var(--red);font-weight:600}.warn{color:var(--orange);font-weight:600}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:34px;padding:7px 14px;border:0;border-radius:980px;background:#e8e8ed;color:var(--ink);font:500 12px inherit;cursor:pointer;transition:all .25s var(--ease);white-space:nowrap}
-.btn:hover{background:#dedee3;transform:scale(1.025)}
+.tag{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:980px;background:var(--tag-bg);color:var(--sub);font-size:11px;font-weight:600;white-space:nowrap}
+.tag .lucide{width:12px;height:12px}
+.tag-code{background:var(--code-bg);color:var(--blue)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:34px;padding:7px 14px;border:0;border-radius:980px;background:var(--button-bg);color:var(--ink);font:500 12px inherit;cursor:pointer;transition:all .25s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--button-hover);transform:scale(1.025)}
 .btn:active{transform:scale(.97)}
-.btn-primary{background:var(--blue);color:#fff;box-shadow:0 8px 20px rgba(0,113,227,.2)}
+.btn-primary{background:var(--blue);color:var(--primary-ink);box-shadow:0 8px 20px rgba(0,113,227,.2)}
 .btn-primary:hover{background:var(--blue-hover)}
-.btn-danger{color:var(--red);background:#fff0f1}
-.btn-danger:hover{background:#ffe3e5}
+.btn-danger{color:var(--red);background:var(--danger-bg)}
+.btn-danger:hover{background:var(--danger-hover)}
 .btn-sm{min-height:28px;padding:5px 10px;font-size:11px}
-input,select{width:100%;height:40px;padding:0 13px;border:1px solid rgba(0,0,0,.12);border-radius:11px;background:rgba(255,255,255,.85);color:var(--ink);font:13px inherit;outline:none;transition:border .2s,box-shadow .2s,background .2s}
-input:focus,select:focus{border-color:var(--blue);background:#fff;box-shadow:0 0 0 4px rgba(0,113,227,.12)}
+input,select{width:100%;height:40px;padding:0 13px;border:1px solid var(--line);border-radius:11px;background:var(--input-bg);color:var(--ink);font:13px inherit;outline:none;transition:border .2s,box-shadow .2s,background .2s}
+input:focus,select:focus{border-color:var(--blue);background:var(--input-focus-bg);box-shadow:0 0 0 4px rgba(0,113,227,.12)}
 input[type=checkbox]{width:16px;height:16px;accent-color:var(--blue)}
 label{display:block;margin:13px 0 6px;color:var(--sub);font-size:12px;font-weight:550}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
-.stat{padding:20px;border-radius:20px;background:#fff;border:1px solid var(--line)}
+.stat{padding:20px;border-radius:20px;background:var(--panel);border:1px solid var(--line)}
 .stat .v{margin-top:5px;font-size:28px;font-weight:700}.stat .s{color:var(--sub);font-size:12px}
 #runlog{max-height:320px;overflow-y:auto;padding:18px 20px;border-radius:17px;background:#111113;color:#a8e6b2;font:12px/1.8 "SFMono-Regular",Consolas,monospace;white-space:pre-wrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
 .hidden{display:none!important}
 .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.row>*{flex:0 0 auto}
 .muted{color:var(--sub);font-size:11px;line-height:1.6}
-.model-chip{display:inline-flex;align-items:center;max-width:230px;padding:5px 9px;border-radius:8px;background:#f0f0f2;color:#36363a;font:11px "SFMono-Regular",Consolas,monospace;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
-.status-pill{display:inline-flex;align-items:center;gap:4px;padding:5px 9px;border-radius:980px;background:#f2f2f4}
-.detail-row td{background:rgba(0,113,227,.025)!important}.detail-label{display:flex;align-items:center;justify-content:flex-end;gap:5px;color:var(--sub)}
+.model-chip{display:inline-flex;align-items:center;max-width:230px;padding:5px 9px;border-radius:8px;background:var(--chip-bg);color:var(--ink);font:11px "SFMono-Regular",Consolas,monospace;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.status-pill{display:inline-flex;align-items:center;gap:4px;padding:5px 9px;border-radius:980px;background:var(--pill-bg)}
+.detail-row td{background:var(--row-hover)!important}.detail-label{display:flex;align-items:center;justify-content:flex-end;gap:5px;color:var(--sub)}
+a{color:var(--blue)}
 .lucide{width:15px;height:15px;vertical-align:-3px}.btn .lucide{width:13px;height:13px}nav .lucide{margin-right:5px;width:14px}h2 .lucide{width:17px;height:17px}td .lucide{margin-right:3px}
 .form2{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
 .settings-layout{display:grid;grid-template-columns:.85fr 1.4fr;gap:22px}
 .section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}
 .section-head h2{margin:0 0 5px}.section-head p{margin:0}
 .chart-shell{height:390px}
+.svg-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.svg-toolbar select{width:220px}
+.svg-preview-trigger{position:relative;display:block;width:180px;height:96px;padding:0;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:zoom-in;overflow:hidden;box-shadow:0 5px 16px rgba(0,0,0,.08);transition:transform .2s var(--ease),box-shadow .2s var(--ease)}
+.svg-preview-trigger:hover{transform:scale(1.03);box-shadow:0 10px 24px rgba(0,0,0,.15)}
+.svg-preview-trigger:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.svg-preview{display:block;width:100%;height:100%;border:0;background:var(--panel);pointer-events:none}
+.svg-preview-hint{position:absolute;right:6px;bottom:6px;padding:4px 7px;border-radius:7px;background:rgba(20,20,24,.74);color:#fff;font-size:10px;line-height:1;pointer-events:none}
+.svg-preview-empty{display:grid;place-items:center;width:180px;height:96px;border:1px dashed var(--line);border-radius:12px;color:var(--sub);font-size:11px}
+.svg-preview-dialog{width:min(1080px,94vw);max-width:none;padding:20px;background:var(--modal-bg)}
+.svg-preview-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}
+.svg-preview-dialog-head h2{margin:0;font-size:18px}
+.svg-preview-large-wrap{display:grid;place-items:center;min-height:320px;border:1px solid var(--line);border-radius:16px;background:var(--panel);overflow:hidden}
+.svg-preview-large{display:block;width:100%;height:min(68vh,680px);border:0;background:var(--panel)}
+.svg-preview-dialog-note{margin:11px 0 0;color:var(--sub);font-size:11px;text-align:center}
+.svg-state{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:980px;background:var(--pill-bg);font-size:11px;font-weight:600}
+.svg-state.running,.svg-state.queued{color:var(--blue)}
+.svg-state.completed{color:var(--green)}
+.svg-state.failed{color:var(--red)}
+.svg-error{max-width:220px;white-space:normal;color:var(--red);font-size:11px;line-height:1.5}
 #toast{position:fixed;left:50%;bottom:28px;z-index:100;display:none;max-width:min(520px,90vw);padding:12px 18px;transform:translateX(-50%);border-radius:980px;background:rgba(29,29,31,.88);color:#fff;font-size:12px;box-shadow:0 18px 50px rgba(0,0,0,.22);backdrop-filter:blur(20px);animation:toastIn .3s var(--ease)}
-dialog{width:min(620px,92vw);padding:28px;border:1px solid rgba(255,255,255,.7);border-radius:24px;background:rgba(250,250,252,.94);box-shadow:0 40px 100px rgba(0,0,0,.25);backdrop-filter:blur(28px)}
-dialog::backdrop{background:rgba(0,0,0,.28);backdrop-filter:blur(12px)}
+dialog{width:min(620px,92vw);padding:28px;border:1px solid var(--card-border);border-radius:24px;background:var(--modal-bg);color:var(--ink);box-shadow:0 40px 100px rgba(0,0,0,.25);backdrop-filter:blur(28px)}
+dialog::backdrop{background:var(--overlay);backdrop-filter:blur(12px)}
+.reco.reco-alert{color:var(--red);background:rgba(255,235,237,.9);border-color:rgba(215,0,21,.18)}
+[data-theme="dark"] .reco{color:#a8e6b2;background:linear-gradient(135deg,rgba(25,73,40,.75),rgba(24,56,36,.7))}
+[data-theme="dark"] .reco.reco-alert{color:#ff9ca6;background:rgba(90,25,34,.72);border-color:rgba(255,107,120,.28)}
 dialog h2{font-size:24px;letter-spacing:-.7px}
 @keyframes spin{to{transform:rotate(360deg)}}@keyframes reveal{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}@keyframes toastIn{from{opacity:0;transform:translate(-50%,12px)}to{opacity:1;transform:translate(-50%,0)}}
 .spin{animation:spin 1s linear infinite}
 @media(max-width:900px){header{padding:0 16px;gap:10px;overflow-x:auto}header h1{display:none}nav button{padding:0 10px}main{padding:0 13px 50px}.hero{padding:50px 8px 30px}.hero h2{letter-spacing:-1.8px}.hero p{font-size:16px}.metrics{grid-template-columns:1fr 1fr}.settings-layout{grid-template-columns:1fr}.card{padding:20px}.chart-shell{height:310px}}
-@media(max-width:560px){header{position:fixed;top:auto;bottom:0;width:100%;height:64px;padding:0 8px;justify-content:center;overflow:visible;border-top:1px solid rgba(0,0,0,.08);border-bottom:0}header nav{flex:1;justify-content:space-around}nav button{display:flex;min-width:55px;height:58px;padding:7px 4px 4px;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:9px}nav button.active:after{display:none}nav button.active{color:var(--blue)}nav .lucide{width:18px;height:18px;margin:0}header>div:last-child{margin-left:0!important}header>div:last-child .btn{width:42px;height:42px;padding:0;font-size:0;box-shadow:0 7px 18px rgba(0,113,227,.28)}header>div:last-child .btn .lucide{width:17px;height:17px}main{padding-bottom:88px}.metrics{grid-template-columns:1fr}.metric{min-height:116px}.form2{grid-template-columns:1fr}.toolbar{align-items:stretch}.toolbar select{width:100%!important}.section-head{flex-direction:column}.hero{padding-top:44px}.hero h2{font-size:38px}.card{border-radius:20px;padding:17px}.chart-shell{height:280px}}
+@media(max-width:560px){header{position:fixed;top:auto;bottom:0;width:100%;height:64px;padding:0 8px;justify-content:center;overflow:visible;border-top:1px solid var(--line);border-bottom:0}header nav{flex:1;justify-content:space-around}nav button{display:flex;min-width:55px;height:58px;padding:7px 4px 4px;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:9px}nav button.active:after{display:none}nav button.active{color:var(--blue)}nav .lucide{width:18px;height:18px;margin:0}.header-actions{margin-left:0!important}.header-actions .btn-primary,.theme-toggle{width:42px;height:42px;padding:0;font-size:0;box-shadow:0 7px 18px rgba(0,113,227,.28)}.header-actions .btn .lucide{width:17px;height:17px}.theme-toggle .theme-label{display:none}main{padding-bottom:88px}.metrics{grid-template-columns:1fr}.metric{min-height:116px}.form2{grid-template-columns:1fr}.toolbar{align-items:stretch}.toolbar select{width:100%!important}.section-head{flex-direction:column}.hero{padding-top:44px}.hero h2{font-size:38px}.card{border-radius:20px;padding:17px}.chart-shell{height:280px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -93,10 +138,14 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
   <nav>
     <button data-tab="dash" class="active"><i data-lucide="layout-dashboard"></i>仪表盘</button>
     <button data-tab="relays"><i data-lucide="plug-zap"></i>中转站管理</button>
+    <button data-tab="svg"><i data-lucide="film"></i>动画</button>
     <button data-tab="questions"><i data-lucide="book-open"></i>题库</button>
     <button data-tab="settings"><i data-lucide="settings"></i>设置</button>
   </nav>
-  <div style="margin-left:auto">
+  <div class="header-actions">
+    <button class="btn theme-toggle" id="themeToggle" type="button" onclick="toggleTheme()" aria-pressed="false">
+      <i data-lucide="moon"></i><span class="theme-label">深色</span>
+    </button>
     <button class="btn btn-primary" onclick="triggerRun()"><i data-lucide="play"></i>立即评测</button>
   </div>
 </header>
@@ -133,6 +182,33 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
   <div class="card hidden" id="runCard">
     <h2><i data-lucide="terminal"></i>评测日志</h2>
     <div id="runlog"></div>
+  </div>
+</section>
+
+<!-- ===================== 动画 ===================== -->
+<section id="tab-svg" class="hidden">
+  <div class="hero"><p class="eyebrow">实时生成 · 模型可选</p><h2>让每一次动画，<br>都由你选择模型。</h2><p>从渠道上游拉取可用模型，选择具体渠道和模型后再生成动画；历史记录会保留实际使用的模型。</p></div>
+  <div class="card" id="svgMonitorCard">
+    <div class="section-head">
+      <div>
+        <h2><i data-lucide="film"></i>AI 鹈鹕骑车动画</h2>
+        <p class="muted">默认每 30 分钟自动生成一次；手动生成时可指定渠道和上游模型。</p>
+      </div>
+      <div class="svg-toolbar">
+        <select id="svgRelaySelect" aria-label="选择 SVG 生成渠道" onchange="updateSvgModelOptions()">
+          <option value="">全部启用渠道</option>
+        </select>
+        <select id="svgModelSelect" aria-label="选择 SVG 生成模型" style="width:240px" disabled>
+          <option value="">全部渠道使用各自默认模型</option>
+        </select>
+        <button class="btn btn-sm" type="button" onclick="fetchSelectedRelayModels('svg')"><i data-lucide="refresh-cw"></i>拉取模型</button>
+        <button class="btn btn-primary" id="svgGenerateBtn" onclick="generateSvgNow()">
+          <i data-lucide="wand-sparkles"></i>立即生成动画
+        </button>
+      </div>
+    </div>
+    <p class="muted" id="svgMonitorState">正在读取动画监控状态…</p>
+    <div class="table-wrap"><table id="svgGenerationTable"></table></div>
   </div>
 </section>
 
@@ -200,10 +276,33 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
       <div><label>基线窗口（天，默认 7）</label><input type="number" id="s_baseline" min="3" max="30" value="7"></div>
       <div><label>观察期最少历史（天，默认 3）</label><input type="number" id="s_minhist" min="1" max="10" value="3"></div>
       <div><label>掺水判定阈值（分，默认 8）</label><input type="number" id="s_drop" step="0.5" value="8"></div>
-      <div><label>最大输出 Token（默认 512）</label><input type="number" id="s_tokens" min="64" max="4096" value="512"></div>
+      <div><label for="s_tokens">最大输出 Token（默认 32K / 32768）</label><input type="number" id="s_tokens" min="1" step="1" value="32768"><span class="muted">所有评测和 SVG 生成共用。Responses 的总输出额度包含推理 Token，高推理等级可能耗尽额度而没有完整正文；可按渠道模型能力调高。</span></div>
+      <div><label for="s_input_tokens">输入 Token 预算（默认 256K / 262144）</label><input type="number" id="s_input_tokens" min="1" step="1" value="262144"><span class="muted">完整发送原始输入，不做本地截断；实际上下文容量以渠道模型为准。</span></div>
+      <div><label for="s_api_timeout">API 请求超时（分钟，默认 15）</label><input type="number" id="s_api_timeout" min="1" max="1440" step="1" value="15"><span class="muted">适用于所有渠道的 API 请求，包括评测和动画生成；已开始的任务沿用原配置。</span></div>
+      <div><label for="s_reasoning">OpenAI 默认推理等级（默认 xhigh）</label><select id="s_reasoning">
+        <option value="max">最高（max）</option>
+        <option value="xhigh" selected>极高（xhigh）</option>
+        <option value="high">高（high）</option>
+        <option value="medium">中（medium）</option>
+        <option value="low">低（low）</option>
+        <option value="minimal">最低（minimal）</option>
+        <option value="none">关闭推理（none）</option>
+        <option value="default">使用模型默认值（不发送参数）</option>
+      </select><span class="muted">仅对选择“跟随系统默认”的 OpenAI 渠道生效。</span></div>
+      <div><label for="s_anthropic_reasoning">Anthropic 默认推理等级（默认 xhigh）</label><select id="s_anthropic_reasoning">
+        <option value="max">最高（max）</option>
+        <option value="xhigh" selected>极高（xhigh）</option>
+        <option value="high">高（high）</option>
+        <option value="medium">中（medium）</option>
+        <option value="low">低（low）</option>
+        <option value="none">关闭思考（none）</option>
+        <option value="default">使用模型默认值（不发送参数）</option>
+      </select><span class="muted">仅对选择“跟随系统默认”的 Anthropic 渠道生效。</span></div>
       <div><label>评测并发数（单站默认 5）</label><input type="number" id="s_conc" min="1" max="20" value="5"></div>
       <div><label>429 限流重测并发</label><input type="number" id="s_conc_fb" min="1" max="1" value="1" readonly></div>
       <div><label>站点并行数（默认及上限 10）</label><input type="number" id="s_par" min="1" max="10" value="10"></div>
+      <div><label>SVG 动画自动监控</label><label style="margin:0"><input type="checkbox" id="s_svg_enabled" style="width:auto"> 启用自动生成</label></div>
+      <div><label>SVG 生成间隔（分钟，默认 30）</label><input type="number" id="s_svg_interval" min="1" max="1440" value="30"></div>
     </div>
     <div style="margin-top:16px"><button class="btn btn-primary" onclick="saveSettings()"><i data-lucide="save"></i>保存设置</button></div>
   </div>
@@ -218,10 +317,17 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
     <div><label>显示名称</label><input id="r_label" placeholder="如 A站"></div>
     <div><label>唯一标识（英文）</label><input id="r_name" placeholder="如 relay-a"></div>
     <div><label>协议</label>
-      <select id="r_protocol"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic 原生</option></select>
+      <select id="r_protocol" onchange="changeRelayProtocol()">
+        <option value="openai">OpenAI Chat Completions</option>
+        <option value="openai-responses">OpenAI Responses</option>
+        <option value="anthropic">Anthropic Messages</option>
+      </select>
     </div>
-    <div><label>模型名</label><input id="r_model" placeholder="如 gpt-4o / claude-sonnet-4"></div>
-    <div style="grid-column:1/-1"><label>Base URL（OpenAI 兼容需带 /v1）</label><input id="r_baseUrl" placeholder="https://xxx.com/v1"></div>
+    <div><label>默认模型名</label><div class="row"><input id="r_model" placeholder="如 gpt-4o / claude-sonnet-4"><button class="btn btn-sm" type="button" onclick="fetchDialogModels()"><i data-lucide="refresh-cw"></i>拉取上游模型</button></div>
+      <select id="r_model_options" class="hidden" onchange="$('r_model').value=this.value"><option value="">已拉取的模型（选择后回填）</option></select></div>
+    <div style="grid-column:1/-1"><label for="r_reasoning">渠道推理等级</label><select id="r_reasoning"></select>
+      <span class="muted" id="r_reasoning_note">渠道单独配置优先；选择“跟随系统默认”时使用设置页的默认等级。</span></div>
+    <div style="grid-column:1/-1"><label>Base URL（OpenAI 协议需带 /v1）</label><input id="r_baseUrl" placeholder="https://xxx.com/v1"></div>
     <div style="grid-column:1/-1"><label>API Key（编辑时留空=不修改）</label><input id="r_apiKey" placeholder="sk-..."></div>
   </div>
   <div class="row" style="margin-top:16px;justify-content:flex-end">
@@ -243,6 +349,18 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
   </div>
 </dialog>
 
+<!-- SVG 动画放大预览 -->
+<dialog id="svgPreviewDlg" class="svg-preview-dialog" aria-labelledby="svgPreviewTitle">
+  <div class="svg-preview-dialog-head">
+    <h2 id="svgPreviewTitle">鹈鹕骑车动画</h2>
+    <button class="btn" type="button" onclick="closeSvgPreview()" aria-label="缩小动画并关闭预览">缩小</button>
+  </div>
+  <div class="svg-preview-large-wrap">
+    <iframe id="svgPreviewFrame" class="svg-preview-large" title="放大的鹈鹕骑车 SVG 动画" sandbox></iframe>
+  </div>
+  <p class="svg-preview-dialog-note">点击外侧区域或按 Esc 缩小返回表格</p>
+</dialog>
+
 <div id="toast"></div>
 
 <script>
@@ -250,7 +368,15 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
 const $ = id => document.getElementById(id);
 let trendChart = null;        // 走势图实例
 let editingRelay = null;      // 当前编辑的中转站原始 name（null=新增）
+let relayReasoningDefaults = {openai:'xhigh', anthropic:'xhigh'};
+let relayReasoningSelections = {}; // 切换协议时保留本次弹窗中分别选择的等级
 let pollTimer = null;         // 评测进度轮询定时器
+let svgPollTimer = null;      // SVG 动画生成状态轮询定时器
+let svgRequestPending = false; // 仅拦截尚未返回的重复点击，不阻止生成期间追加其他渠道
+let svgInitialized = false;    // 动画页按需初始化，避免仪表盘首屏触发无关请求
+const relayModelCache = new Map(); // 渠道 -> 最近一次上游模型列表
+const svgRowSignatures = new Map(); // 按记录缓存，避免轮询重载未变化的 SVG iframe
+let lastSvgPreviewTrigger = null;
 const expandedStations = new Set();  // 已展开「每次评测明细」的站点
 
 /** 展开/收起某站的每次评测明细 */
@@ -262,6 +388,51 @@ function toggleRuns(name){
 
 /** 渲染 lucide 图标（动态内容更新后调用） */
 function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
+
+/* ---------------- 主题 ---------------- */
+/** 应用主题并同步按钮状态；未显式选择时跟随系统偏好。 */
+function applyTheme(theme, persist = true){
+  const next = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  if(persist){
+    themeState.selected = next;
+    try { localStorage.setItem(themeState.storageKey, next); }
+    catch (e) { console.warn('[主题] 无法保存到本地存储，本次选择仅在当前会话生效'); }
+    console.debug('[主题] 已切换为' + (next === 'dark' ? '深色' : '浅色') + '模式');
+  }
+  const btn = $('themeToggle');
+  if(btn){
+    const dark = next === 'dark';
+    btn.setAttribute('aria-pressed', String(dark));
+    btn.setAttribute('aria-label', dark ? '切换到浅色模式' : '切换到深色模式');
+    btn.title = dark ? '切换到浅色模式' : '切换到深色模式';
+    btn.innerHTML = `<i data-lucide="${dark ? 'sun' : 'moon'}"></i><span class="theme-label">${dark ? '浅色' : '深色'}</span>`;
+    refreshIcons();
+  }
+  // 直接更新画布配色，切换主题无需请求或重新渲染业务数据。
+  updateTrendTheme();
+}
+
+/** 在亮色与深色之间切换，并记住用户选择。 */
+function toggleTheme(){
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+}
+
+/** 没有手动选择主题时，系统主题变化也同步到页面。 */
+if(themeState.system){
+  const onSystemThemeChange = event => {
+    if(!themeState.selected) applyTheme(event.matches ? 'dark' : 'light', false);
+  };
+  if(themeState.system.addEventListener) themeState.system.addEventListener('change', onSystemThemeChange);
+  else themeState.system.addListener(onSystemThemeChange);
+}
+
+// 在其他标签页切换主题或清除偏好后，同步本页的选择状态。
+window.addEventListener('storage', event => {
+  if(event.key !== themeState.storageKey && event.key !== null) return;
+  themeState.selected = event.newValue === 'dark' || event.newValue === 'light' ? event.newValue : null;
+  applyTheme(themeState.selected || (themeState.system?.matches ? 'dark' : 'light'), false);
+});
 
 /** 轻提示 */
 function toast(msg){ $('toast').textContent = msg; $('toast').style.display='block';
@@ -277,9 +448,10 @@ async function api(path, opts){ const r = await fetch(path, opts &&
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');
-  ['dash','relays','questions','settings'].forEach(t =>
+  ['dash','relays','svg','questions','settings'].forEach(t =>
     $('tab-'+t).classList.toggle('hidden', t !== b.dataset.tab));
   if(b.dataset.tab==='relays') loadRelays();
+  if(b.dataset.tab==='svg') initSvgPage();
   if(b.dataset.tab==='questions') loadQuestions();
   if(b.dataset.tab==='settings') loadSettings();
 });
@@ -292,12 +464,12 @@ async function loadDay(){
   const d = await api('/api/day/'+date);
   // 推荐卡
   const box = $('recoBox');
-  if(d.best){ box.classList.remove('hidden'); box.style.borderColor = ''; box.style.background = '';
+  if(d.best){ box.classList.remove('hidden','reco-alert'); box.style.borderColor = ''; box.style.background = '';
     box.innerHTML = `<i data-lucide="badge-check"></i><div><b>今日推荐 ${d.best.label}</b><div class="muted" style="color:inherit;margin-top:3px">综合得分 ${d.best.score} · ${d.best.status}${d.note}</div></div>`;
   } else if(d.rows.length){ box.classList.remove('hidden');
-    box.style.borderColor = 'rgba(215,0,21,.18)'; box.style.background = 'rgba(255,235,237,.9)';
+    box.classList.add('reco-alert'); box.style.borderColor = ''; box.style.background = '';
     box.innerHTML = `<i data-lucide="octagon-alert"></i><div><b>今日暂无推荐</b><div class="muted" style="color:inherit;margin-top:3px">${d.note || '所有站点评测异常'}</div></div>`;
-  } else box.classList.add('hidden');
+  } else { box.classList.add('hidden'); box.classList.remove('reco-alert'); }
   renderMetrics(d);
   // 详情表
   const cls = s => (s==='疑似掺水'||s==='评测异常') ? 'bad' : (s==='正常' ? 'ok' : 'warn');
@@ -353,25 +525,53 @@ function renderMetrics(d){
   const latency = latencyRows.length
     ? Math.round(latencyRows.reduce((sum,r)=>sum+r.latency,0)/latencyRows.length)+' ms' : '—';
   const cards = [
-    ['gauge',avg,'站点平均分','#e8f3ff','#0071e3','rgba(0,113,227,.12)'],
-    ['shield-check',`${normal}/${rows.length}`,'正常站点','#eaf8ee','#248a3d','rgba(36,138,61,.12)'],
-    ['history',totalRuns,'当日评测次数','#f3edff','#8944ab','rgba(137,68,171,.12)'],
-    ['timer',latency,'平均响应延迟','#fff4e8','#b25000','rgba(178,80,0,.12)'],
+    ['gauge',avg,'站点平均分','rgba(0,113,227,.12)','var(--blue)'],
+    ['shield-check',`${normal}/${rows.length}`,'正常站点','rgba(36,138,61,.12)','var(--green)'],
+    ['history',totalRuns,'当日评测次数','rgba(137,68,171,.12)','var(--purple)'],
+    ['timer',latency,'平均响应延迟','rgba(178,80,0,.12)','var(--orange)'],
   ];
-  $('metricGrid').innerHTML = cards.map(c=>`<div class="metric" style="--tone:${c[3]};--accent:${c[4]};--glow:${c[5]}">
+  $('metricGrid').innerHTML = cards.map(c=>`<div class="metric" style="--tone:${c[3]};--accent:${c[4]};--glow:${c[3]}">
     <div class="metric-icon"><i data-lucide="${c[0]}"></i></div><div class="metric-value">${c[1]}</div><div class="metric-label">${c[2]}</div></div>`).join('');
+}
+
+/** 图表与页面共用语义色，保证文字、网格和曲线在两种主题下都可辨认。 */
+function getTrendColors(){
+  const styles = getComputedStyle(document.documentElement);
+  const color = name => styles.getPropertyValue(name).trim();
+  return {text:color('--sub'), grid:color('--line'), tooltip:color('--chart-tooltip'),
+    series:['--blue','--red','--green','--orange','--purple','--pink'].map(color)};
+}
+
+/** 保留图表数据和图例选择，只更新主题颜色。 */
+function updateTrendTheme(){
+  if(!trendChart) return;
+  const colors = getTrendColors();
+  trendChart.options.plugins.legend.labels.color = colors.text;
+  trendChart.options.plugins.tooltip.backgroundColor = colors.tooltip;
+  trendChart.options.scales.x.ticks.color = colors.text;
+  trendChart.options.scales.y.ticks.color = colors.text;
+  trendChart.options.scales.y.grid.color = colors.grid;
+  trendChart.data.datasets.forEach((dataset, index) => {
+    dataset.borderColor = dataset.backgroundColor = colors.series[index % colors.series.length];
+  });
+  trendChart.update('none');
 }
 
 /** 渲染多站分数走势折线图 */
 function drawTrend(trends){
   const names = Object.keys(trends);
-  if(!names.length){ if(trendChart) trendChart.destroy(); return; }
+  if(!names.length){
+    if(trendChart) trendChart.destroy();
+    trendChart = null;
+    return;
+  }
+  const colors = getTrendColors();
   const dates = [...new Set(names.flatMap(n => trends[n].points.map(p=>p[0])))].sort();
   const datasets = names.map((n,i) => ({
     label: trends[n].label,
     data: dates.map(dt => { const p = trends[n].points.find(x=>x[0]===dt); return p ? p[1] : null; }),
-    borderColor: ['#0071e3','#ff3b30','#248a3d','#ff9500','#af52de','#ff2d55'][i%6],
-    backgroundColor: ['#0071e3','#ff3b30','#248a3d','#ff9500','#af52de','#ff2d55'][i%6],
+    borderColor: colors.series[i % colors.series.length],
+    backgroundColor: colors.series[i % colors.series.length],
     spanGaps: true, tension: .38, borderWidth:2.2, pointRadius:2.5, pointHoverRadius:6,
   }));
   if(trendChart) trendChart.destroy();
@@ -380,10 +580,10 @@ function drawTrend(trends){
       type:'line',
       data:{ labels:dates, datasets },
       options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-        plugins:{legend:{position:'top',align:'end',labels:{usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:18,color:'#6e6e73',font:{size:11}}},
-          tooltip:{backgroundColor:'rgba(29,29,31,.9)',padding:12,cornerRadius:10,titleFont:{size:12},bodyFont:{size:12}}},
-        scales:{x:{grid:{display:false},border:{display:false},ticks:{color:'#86868b',font:{size:10}}},
-          y:{min:0,max:100,border:{display:false},grid:{color:'rgba(0,0,0,.055)'},ticks:{color:'#86868b',font:{size:10},stepSize:20}}} },
+        plugins:{legend:{position:'top',align:'end',labels:{usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:18,color:colors.text,font:{size:11}}},
+          tooltip:{backgroundColor:colors.tooltip,padding:12,cornerRadius:10,titleFont:{size:12},bodyFont:{size:12}}},
+        scales:{x:{grid:{display:false},border:{display:false},ticks:{color:colors.text,font:{size:10}}},
+          y:{min:0,max:100,border:{display:false},grid:{color:colors.grid},ticks:{color:colors.text,font:{size:10},stepSize:20}}} },
     });
   }
 }
@@ -400,6 +600,266 @@ async function initDash(){
   if(st.running) watchRun();
 }
 
+/** 动画页按需初始化；独立页面打开后才启动高频状态轮询。 */
+async function initSvgPage(){
+  if(!svgInitialized){
+    svgInitialized = true;
+    await loadSvgRelayOptions();
+    await loadSvgGenerations();
+    startSvgPolling();
+  } else {
+    await loadSvgRelayOptions();
+    await loadSvgGenerations();
+  }
+}
+
+/** 格式化本地时间；后端统一保存无时区本地时间。 */
+function formatSvgTime(value){
+  if(!value) return '—';
+  return String(value).replace('T',' ');
+}
+
+/** 对表格中的渠道配置和模型响应文本做 HTML 转义。 */
+function escapeHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  })[char]);
+}
+
+/** SVG 表格的状态文案与图标。 */
+function svgStatusMeta(status){
+  return {
+    queued:['排队中','clock','queued'],
+    generating:['生成中','loader-circle','running'],
+    completed:['已完成','circle-check','completed'],
+    failed:['生成失败','circle-alert','failed'],
+  }[status] || ['未知状态','circle-question','failed'];
+}
+
+/** 填充 SVG 生成渠道下拉框；模型列表只在用户主动拉取后缓存。 */
+async function loadSvgRelayOptions(){
+  const select = $('svgRelaySelect');
+  if(!select) return;
+  const current = select.value;
+  const relays = await api('/api/relays');
+  window.svgRelayRows = relays;
+  select.innerHTML = '<option value="">全部启用渠道</option>' + relays.map(r =>
+    `<option value="${escapeHtml(r.name)}">${escapeHtml(r.label)}（${escapeHtml(r.model)}${r.enabled?'':'，已停用'}）</option>`
+  ).join('');
+  if([...select.options].some(option => option.value === current)) select.value = current;
+  updateSvgModelOptions();
+}
+
+/** 根据动画页当前渠道填充模型选择；未拉取时至少显示渠道默认模型。 */
+function updateSvgModelOptions(){
+  const relay = $('svgRelaySelect')?.value;
+  const select = $('svgModelSelect');
+  if(!select) return;
+  if(!relay){
+    select.innerHTML = '<option value="">全部渠道使用各自默认模型</option>';
+    select.disabled = true;
+    return;
+  }
+  const row = (window.svgRelayRows || []).find(item => item.name === relay);
+  const models = relayModelCache.get(relay) || (row?.model ? [row.model] : []);
+  const current = row?.model || models[0] || '';
+  select.innerHTML = models.map(model => `<option value="${escapeHtml(model)}"${model === current ? ' selected' : ''}>${escapeHtml(model)}</option>`).join('');
+  select.disabled = !models.length;
+}
+
+/** 拉取当前渠道模型；source=svg 更新动画下拉，否则更新渠道管理表。 */
+async function fetchRelayModels(name, source='relays'){
+  try{
+    const result = await api(`/api/relays/${encodeURIComponent(name)}/models`);
+    relayModelCache.set(name, result.models || []);
+    console.debug(`[模型] ${name} 已缓存 ${(result.models || []).length} 个上游模型`);
+    if(source === 'svg') updateSvgModelOptions();
+    else loadRelays();
+    toast(`已拉取 ${result.models.length} 个上游模型`);
+    return result.models || [];
+  }catch(e){
+    toast('拉取模型失败：'+e.message);
+    return [];
+  }
+}
+
+/** 动画页按钮入口：没有选渠道时提示用户先选择。 */
+function fetchSelectedRelayModels(source='svg'){
+  const relay = source === 'svg' ? $('svgRelaySelect')?.value : null;
+  if(!relay) return toast('请先选择一个渠道，再拉取上游模型');
+  return fetchRelayModels(relay, source);
+}
+
+/** 渲染 SVG 动画生成表格，生成中记录也保留在表内。 */
+async function loadSvgGenerations(){
+  const data = await api('/api/svg-generations?limit=50');
+  const state = data.state || {};
+  const stateNode = $('svgMonitorState');
+  const btn = $('svgGenerateBtn');
+  if(stateNode){
+    if(!state.enabled){
+      stateNode.textContent = '自动监控已停用，可随时点击「立即生成动画」手动生成。';
+    } else {
+      const next = state.next_run_at ? `下次自动生成：${formatSvgTime(state.next_run_at)}` : '正在安排下一次自动生成';
+      const progress = state.running ? `当前轮次：已完成 ${state.completed}/${state.total}，失败 ${state.failed}` : '当前没有进行中的生成任务';
+      stateNode.textContent = `自动监控已开启（每 ${state.interval_minutes} 分钟） · ${next} · ${progress}`;
+    }
+  }
+  if(btn){
+    // 自动或手动任务运行期间仍可点按；服务端会按渠道去重。
+    btn.disabled = svgRequestPending;
+    btn.innerHTML = svgRequestPending
+      ? '<i data-lucide="loader-circle" class="spin"></i>正在提交…'
+      : '<i data-lucide="wand-sparkles"></i>立即生成动画';
+  }
+  const rows = data.items || [];
+  const table = $('svgGenerationTable');
+  if(!table.tHead || !table.tBodies.length){
+    table.innerHTML = '<thead><tr><th>动画预览</th><th>生成渠道</th><th>模型</th><th>状态</th><th>触发方式</th><th>请求时间</th><th>完成时间</th><th>说明</th></tr></thead><tbody></tbody>';
+  }
+  const body = table.tBodies[0];
+  const nextSignatures = new Map();
+  const desiredIds = new Set();
+  const existingRows = new Map([...body.querySelectorAll('tr[data-svg-generation-id]')]
+    .map(node => [node.dataset.svgGenerationId, node]));
+  if(!rows.length){
+    if(!body.querySelector('[data-svg-empty]')){
+      body.innerHTML = '<tr data-svg-empty="true"><td colspan="8" class="muted">暂无生成记录，点击「立即生成动画」开始。</td></tr>';
+    }
+  } else {
+    if(body.querySelector('[data-svg-empty]')){
+      body.querySelector('[data-svg-empty]').remove();
+    }
+  }
+  rows.forEach(row => {
+    const id = String(Number(row.id));
+    desiredIds.add(id);
+    const signature = JSON.stringify(row);
+    nextSignatures.set(id, signature);
+    let rowNode = existingRows.get(id);
+    if(rowNode && svgRowSignatures.get(id) === signature) return;
+    const [label, icon, css] = svgStatusMeta(row.status);
+    const relayLabel = escapeHtml(row.relay_label);
+    const relayName = escapeHtml(row.relay);
+    const model = escapeHtml(row.model_id);
+    const preview = row.status === 'completed'
+      ? `<div class="svg-preview-trigger" role="button" tabindex="0" data-svg-preview-id="${id}" data-svg-preview-title="${escapeHtml(`${row.relay_label} · ${row.model_id}`)}" data-svg-preview-time="${escapeHtml(formatSvgTime(row.completed_at))}" aria-label="点击放大播放 ${relayLabel} 生成的鹈鹕骑车动画"><iframe class="svg-preview" src="/api/svg-generations/${id}/preview" title="${relayLabel} 生成的鹈鹕骑车动画" sandbox loading="lazy"></iframe><span class="svg-preview-hint">点击放大播放</span></div>`
+      : `<div class="svg-preview-empty"><i data-lucide="${icon}" class="${row.status==='generating'?'spin':''}"></i>${label}</div>`;
+    const note = row.status === 'failed'
+      ? `<span class="svg-error">${escapeHtml(row.error_detail || '渠道没有返回可用 SVG')}</span><div class="muted">${row.failure_log_available
+          ? `<a href="/api/svg-generations/${id}/failure-log">下载完整失败日志</a>`
+          : '该记录未保留原始日志'}</div>`
+      : (row.status === 'completed' ? '动画可播放' : '等待渠道返回动画');
+    const triggerLabel = row.trigger === 'scheduled' ? '自动监控'
+      : (row.trigger === 'validation' ? '开发验证' : '手动生成');
+    const html = `<tr data-svg-generation-id="${id}"><td>${preview}</td><td><b>${relayLabel}</b><div class="muted">${relayName}</div></td>
+      <td><span class="model-chip" title="${model}">${model}</span></td>
+      <td><span class="svg-state ${css}"><i data-lucide="${icon}" class="${row.status==='generating'?'spin':''}"></i>${label}</span></td>
+      <td>${triggerLabel}</td><td>${escapeHtml(formatSvgTime(row.requested_at))}</td>
+      <td>${escapeHtml(formatSvgTime(row.completed_at))}</td><td>${note}</td></tr>`;
+    const holder = document.createElement('tbody');
+    holder.innerHTML = html;
+    const replacement = holder.firstElementChild;
+    if(rowNode) rowNode.replaceWith(replacement);
+    else body.appendChild(replacement);
+    existingRows.set(id, replacement);
+  });
+  if(rows.length){
+    for(const [id, node] of existingRows){
+      if(!desiredIds.has(id)){
+        node.remove();
+      }
+    }
+    let cursor = body.firstElementChild;
+    for(const row of rows){
+      const node = existingRows.get(String(Number(row.id)));
+      if(node !== cursor) body.insertBefore(node, cursor);
+      cursor = node.nextElementSibling;
+    }
+  }
+  svgRowSignatures.clear();
+  for(const [id, signature] of nextSignatures) svgRowSignatures.set(id, signature);
+  // 按钮状态每轮都会同步；图标需要重新把新插入的 data-lucide 节点转换为 SVG。
+  // refreshIcons 不会触碰未变化的 iframe，因此不会重置已完成动画。
+  refreshIcons();
+  return data;
+}
+
+/** 用户主动生成：与自动监控共用后台任务和状态门禁。 */
+async function generateSvgNow(){
+  const selected = $('svgRelaySelect')?.value;
+  const selectedModel = $('svgModelSelect')?.value;
+  const body = selected ? {relays:[selected], models:selectedModel ? {[selected]:selectedModel} : {}} : {};
+  const btn = $('svgGenerateBtn');
+  if(svgRequestPending) return;
+  svgRequestPending = true;
+  if(btn) btn.disabled = true;
+  try{
+    const result = await api('/api/svg-generations/generate', {method:'POST', body:JSON.stringify(body)});
+    toast(result.msg);
+    await loadSvgGenerations();
+    startSvgPolling();
+  }catch(e){
+    toast('启动 SVG 生成失败：'+e.message);
+  }finally{
+    svgRequestPending = false;
+    if(btn) btn.disabled = false;
+    if(btn) btn.innerHTML = '<i data-lucide="wand-sparkles"></i>立即生成动画';
+    refreshIcons();
+  }
+}
+
+/** 轮询 SVG 生成状态；页面打开期间实时反映排队、生成中和完成。 */
+function startSvgPolling(){
+  clearInterval(svgPollTimer);
+  svgPollTimer = setInterval(async () => {
+    try{
+      await loadSvgGenerations();
+    }catch(e){
+      console.warn('[SVG监控] 状态轮询失败', e);
+    }
+  }, 2000);
+}
+
+/** 在独立弹窗中播放选中的 SVG，避免 iframe 内点击被隔离而无法冒泡。 */
+function openSvgPreview(trigger){
+  const dialog = $('svgPreviewDlg');
+  const frame = $('svgPreviewFrame');
+  if(!dialog || !frame || !trigger?.dataset.svgPreviewId) return;
+  lastSvgPreviewTrigger = trigger;
+  $('svgPreviewTitle').textContent = `${trigger.dataset.svgPreviewTitle || '鹈鹕骑车动画'} · ${trigger.dataset.svgPreviewTime || ''}`;
+  frame.title = `${trigger.dataset.svgPreviewTitle || '鹈鹕骑车动画'} 放大预览`;
+  frame.src = `/api/svg-generations/${encodeURIComponent(trigger.dataset.svgPreviewId)}/preview`;
+  if(!dialog.open) dialog.showModal();
+}
+
+/** 关闭放大预览并释放弹窗 iframe。 */
+function closeSvgPreview(){
+  const dialog = $('svgPreviewDlg');
+  if(dialog?.open) dialog.close();
+}
+
+// 使用表格事件委托，兼容实时轮询重建行节点。
+$('svgGenerationTable').addEventListener('click', event => {
+  const trigger = event.target.closest('.svg-preview-trigger');
+  if(trigger) openSvgPreview(trigger);
+});
+$('svgGenerationTable').addEventListener('keydown', event => {
+  const trigger = event.target.closest('.svg-preview-trigger');
+  if(trigger && (event.key === 'Enter' || event.key === ' ')){
+    event.preventDefault();
+    openSvgPreview(trigger);
+  }
+});
+$('svgPreviewDlg').addEventListener('click', event => {
+  if(event.target === $('svgPreviewDlg')) closeSvgPreview();
+});
+$('svgPreviewDlg').addEventListener('close', () => {
+  $('svgPreviewFrame').src = 'about:blank';
+  if(lastSvgPreviewTrigger?.isConnected) lastSvgPreviewTrigger.focus();
+  lastSvgPreviewTrigger = null;
+});
+
 /** 新窗口打开当日 HTML 日报 */
 function openReport(){
   const d = $('daySel').value; if(!d) return toast('该日期没有日报');
@@ -408,8 +868,8 @@ function openReport(){
 
 /* ---------------- 评测触发与进度 ---------------- */
 /** 手动触发评测（relays 为空=全部；传名字数组=指定站点） */
-async function triggerRun(relays){
-  const body = relays && relays.length ? {relays} : {};
+async function triggerRun(relays, models){
+  const body = relays && relays.length ? {relays, models: models || {}} : {};
   const r = await api('/api/run', {method:'POST', body:JSON.stringify(body)});
   toast(r.msg);
   if(r.ok){
@@ -423,7 +883,12 @@ async function triggerRun(relays){
 async function testSelected(){
   const names = [...document.querySelectorAll('.cb-rel:checked')].map(c => c.value);
   if(!names.length) return toast('请先勾选要测试的站点');
-  triggerRun(names);
+  const models = {};
+  names.forEach(name => {
+    const select = [...document.querySelectorAll('.relay-test-model')].find(node => node.dataset.relayName === name);
+    if(select?.value) models[name] = select.value;
+  });
+  triggerRun(names, models);
 }
 
 /** 暂停评测 */
@@ -449,30 +914,37 @@ async function stopRun(){
 function watchRun(){
   $('runCard').classList.remove('hidden');
   $('runCtl').classList.remove('hidden');
+  $('runlog').textContent = '正在等待评测日志…';
+  $('runCard').scrollIntoView({behavior:'smooth', block:'nearest'});
   clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
-    const st = await api('/api/run/status');
-    $('runlog').textContent = st.log.join('\n');
-    $('runlog').scrollTop = 1e9;
-    // 暂停/运行状态切换
-    if(st.running && st.paused){
-      $('runState').innerHTML = '<i data-lucide="pause"></i> 已暂停';
-      $('btnPause').classList.add('hidden');
-      $('btnResume').classList.remove('hidden');
-    } else if(st.running){
-      $('runState').innerHTML = '<i data-lucide="loader-circle" class="spin"></i> 评测进行中…';
-      $('btnPause').classList.remove('hidden');
-      $('btnResume').classList.add('hidden');
-    }
-    refreshIcons();
-    if(!st.running){
-      clearInterval(pollTimer);
-      $('runState').innerHTML = '<i data-lucide="circle-check"></i> 评测结束';
-      $('runCtl').classList.add('hidden');
+    try {
+      const st = await api('/api/run/status');
+      if(st.log.length) $('runlog').textContent = st.log.join('\n');
+      $('runlog').scrollTop = 1e9;
+      // 暂停/运行状态切换
+      if(st.running && st.paused){
+        $('runState').innerHTML = '<i data-lucide="pause"></i> 已暂停';
+        $('btnPause').classList.add('hidden');
+        $('btnResume').classList.remove('hidden');
+      } else if(st.running){
+        $('runState').innerHTML = '<i data-lucide="loader-circle" class="spin"></i> 评测进行中…';
+        $('btnPause').classList.remove('hidden');
+        $('btnResume').classList.add('hidden');
+      }
       refreshIcons();
-      toast('评测结束');
-      initDash();
-      if(!$('tab-relays').classList.contains('hidden')) loadRelays();
+      if(!st.running){
+        clearInterval(pollTimer);
+        $('runState').innerHTML = '<i data-lucide="circle-check"></i> 评测结束';
+        $('runCtl').classList.add('hidden');
+        refreshIcons();
+        toast('评测结束');
+        initDash();
+        if(!$('tab-relays').classList.contains('hidden')) loadRelays();
+      }
+    } catch(e) {
+      // 网络错误不中断轮询，但提示
+      $('runlog').textContent += '\n[连接错误，重试中…]';
     }
   }, 1500);
 }
@@ -481,37 +953,106 @@ function watchRun(){
 /** 渲染中转站列表 */
 async function loadRelays(){
   const relays = await api('/api/relays');
-  let html = `<tr><th>选</th><th>名称</th><th>标识</th><th>协议</th><th>Base URL</th><th>模型</th>
+  let html = `<tr><th>选</th><th>名称</th><th>标识</th><th>协议</th><th>Base URL</th><th>测试模型</th><th>推理等级</th>
     <th>API Key</th><th>状态</th><th>操作</th></tr>`;
-  if(!relays.length) html += `<tr><td colspan="9" class="muted">暂无中转站，点击右上角新增</td></tr>`;
+  if(!relays.length) html += `<tr><td colspan="10" class="muted">暂无中转站，点击右上角新增</td></tr>`;
   relays.forEach(r => {
+    const models = relayModelCache.get(r.name) || [r.model];
+    const options = models.map(model => `<option value="${escapeHtml(model)}"${model === r.model ? ' selected' : ''}>${escapeHtml(model)}</option>`).join('');
     html += `<tr><td><input type="checkbox" class="cb-rel" value="${r.name}" style="width:auto"></td>
-      <td>${r.label}</td><td>${r.name}</td>
-      <td>${r.protocol==='anthropic'?'Anthropic':'OpenAI'}</td>
-      <td style="max-width:220px;word-break:break-all">${r.baseUrl}</td><td>${r.model}</td>
-      <td class="muted">${r.apiKey}</td>
+      <td>${escapeHtml(r.label)}</td><td>${escapeHtml(r.name)}</td>
+      <td>${escapeHtml({openai:'OpenAI Chat Completions','openai-responses':'OpenAI Responses',anthropic:'Anthropic Messages'}[r.protocol] || r.protocol)}</td>
+      <td style="max-width:220px;word-break:break-all">${escapeHtml(r.baseUrl)}</td><td><select class="relay-test-model" data-relay-name="${escapeHtml(r.name)}" style="min-width:180px">${options}</select>
+        <button class="btn btn-sm relay-fetch-models" data-relay-name="${escapeHtml(r.name)}" title="从上游刷新模型"><i data-lucide="refresh-cw"></i>拉取</button></td>
+      <td>${r.reasoning_effort == null ? '跟随默认 · ' : ''}${escapeHtml(reasoningLevelLabel(r.effective_reasoning_effort ?? r.reasoning_effort ?? 'xhigh'))}</td>
+      <td class="muted">${escapeHtml(r.apiKey)}</td>
       <td class="${r.enabled?'ok':'warn'}"><i data-lucide="${r.enabled?'circle-check':'circle-off'}"></i>${r.enabled?'启用':'停用'}</td>
-      <td><button class="btn btn-sm" onclick="triggerRun(['${r.name}'])"><i data-lucide="play"></i>测试</button>
-        <button class="btn btn-sm" onclick="openRelayDialog('${r.name}')"><i data-lucide="pencil"></i>编辑</button>
-        <button class="btn btn-sm btn-danger" onclick="delRelay('${r.name}')"><i data-lucide="trash-2"></i>删除</button></td></tr>`;
+      <td><button class="btn btn-sm relay-test-btn" data-relay-name="${escapeHtml(r.name)}"><i data-lucide="play"></i>测试</button>
+        <button class="btn btn-sm relay-edit-btn" data-relay-name="${escapeHtml(r.name)}"><i data-lucide="pencil"></i>编辑</button>
+        <button class="btn btn-sm btn-danger relay-delete-btn" data-relay-name="${escapeHtml(r.name)}"><i data-lucide="trash-2"></i>删除</button></td></tr>`;
   });
   $('relayTable').innerHTML = html;
+  $('relayTable').querySelectorAll('.relay-test-btn').forEach(btn => btn.onclick = () => {
+    const name = btn.dataset.relayName;
+    const model = [...$('relayTable').querySelectorAll('.relay-test-model')].find(select => select.dataset.relayName === name)?.value;
+    triggerRun([name], model ? {[name]: model} : {});
+  });
+  $('relayTable').querySelectorAll('.relay-fetch-models').forEach(btn => btn.onclick = () => fetchRelayModels(btn.dataset.relayName));
+  $('relayTable').querySelectorAll('.relay-edit-btn').forEach(btn => btn.onclick = () => openRelayDialog(btn.dataset.relayName));
+  $('relayTable').querySelectorAll('.relay-delete-btn').forEach(btn => btn.onclick = () => delRelay(btn.dataset.relayName));
   refreshIcons();
+}
+
+/** 推理等级使用协议原生档位；继承系统默认与省略请求参数分别表示。 */
+function reasoningLevelLabel(value){
+  return {xhigh:'极高（xhigh）', high:'高（high）', medium:'中（medium）', low:'低（low）',
+    minimal:'最低（minimal）', max:'最高（max）', none:'关闭推理／思考（none）',
+    default:'使用模型默认值'}[value] || value;
+}
+
+/** 协议切换只展示该协议支持的推理等级，并保留本次弹窗内的选择。 */
+function changeRelayProtocol(){
+  const select = $('r_reasoning');
+  if(select.dataset.protocol) relayReasoningSelections[select.dataset.protocol] = select.value;
+  const protocol = $('r_protocol').value;
+  const defaultGroup = protocol === 'anthropic' ? 'anthropic' : 'openai';
+  const levels = protocol === 'anthropic'
+    ? ['max','xhigh','high','medium','low','none','default']
+    : ['max','xhigh','high','medium','low','minimal','none','default'];
+  select.innerHTML = `<option value="">跟随系统默认（${escapeHtml(reasoningLevelLabel(relayReasoningDefaults[defaultGroup]))}）</option>` +
+    levels.map(value=>`<option value="${value}">${reasoningLevelLabel(value)}</option>`).join('');
+  const saved = relayReasoningSelections[protocol] ?? '';
+  select.value = levels.includes(saved) ? saved : '';
+  select.dataset.protocol = protocol;
+  $('r_reasoning_note').textContent = '渠道单独配置优先；跟随系统默认时使用设置页的对应协议默认值。' +
+    (protocol === 'anthropic' ? '选择思考等级会启用自适应思考，请使用支持此能力的模型。' : '请选择当前模型和渠道支持的推理等级。');
 }
 
 /** 打开中转站编辑弹窗（name 为空=新增） */
 async function openRelayDialog(name){
+  const settings = await api('/api/settings');
+  relayReasoningDefaults = {openai:settings.reasoning_effort ?? 'xhigh', anthropic:settings.anthropic_reasoning_effort ?? 'xhigh'};
+  relayReasoningSelections = {};
+  delete $('r_reasoning').dataset.protocol;
   editingRelay = name || null;
   $('relayDlgTitle').textContent = name ? '编辑中转站' : '新增中转站';
   if(name){
     const r = (await api('/api/relays')).find(x=>x.name===name);
     $('r_label').value=r.label; $('r_name').value=r.name; $('r_protocol').value=r.protocol;
     $('r_baseUrl').value=r.baseUrl; $('r_model').value=r.model; $('r_apiKey').value='';
+    relayReasoningSelections[r.protocol] = r.reasoning_effort ?? '';
+    fillDialogModelOptions(relayModelCache.get(name) || []);
   } else {
     ['r_label','r_name','r_baseUrl','r_model','r_apiKey'].forEach(i=>$(i).value='');
     $('r_protocol').value='openai';
+    $('r_model_options').innerHTML = '<option value="">先填写并保存渠道，再拉取上游模型</option>';
+    $('r_model_options').classList.add('hidden');
   }
+  changeRelayProtocol();
   relayDlg.showModal();
+}
+
+/** 把已拉取的模型放入编辑弹窗，但不自动改写当前默认值。 */
+function fillDialogModelOptions(models){
+  const select = $('r_model_options');
+  if(!select) return;
+  if(!models?.length){
+    select.innerHTML = '<option value="">上游没有可选模型</option>';
+    select.classList.add('hidden');
+    return;
+  }
+  select.innerHTML = '<option value="">从上游模型中选择并回填</option>' +
+    models.map(model => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join('');
+  select.classList.remove('hidden');
+}
+
+/** 编辑弹窗专用的模型拉取入口；新增渠道需先保存一次配置。 */
+async function fetchDialogModels(){
+  const name = editingRelay || $('r_name').value.trim();
+  if(!name) return toast('请先填写渠道唯一标识');
+  if(!editingRelay) return toast('请先保存新渠道，再拉取上游模型');
+  const models = await fetchRelayModels(name, 'dialog');
+  fillDialogModelOptions(models);
 }
 
 /** 保存中转站（新增或更新） */
@@ -520,6 +1061,7 @@ async function saveRelay(){
     label:$('r_label').value.trim(), name:$('r_name').value.trim(),
     protocol:$('r_protocol').value, baseUrl:$('r_baseUrl').value.trim(),
     apiKey:$('r_apiKey').value.trim(), model:$('r_model').value.trim(), enabled:true,
+    reasoning_effort:$('r_reasoning').value || null,
   };
   if(!body.label || !body.name || !body.baseUrl || !body.model)
     return toast('名称、标识、Base URL、模型为必填项');
@@ -560,11 +1102,17 @@ async function loadQuestions(){
   });
   $('verTable').innerHTML = vh;
   // 题目表（仅活动版本）
-  let html = `<tr><th>#</th><th>题目</th><th>标准答案</th><th>操作</th></tr>`;
-  if(!qs.length) html += `<tr><td colspan="4" class="muted">题库为空，请从上方抽样生成新版本</td></tr>`;
+  let html = `<tr><th>#</th><th>题型</th><th>题目</th><th>标准答案</th><th>操作</th></tr>`;
+  if(!qs.length) html += `<tr><td colspan="5" class="muted">题库为空，请从上方抽样生成新版本</td></tr>`;
   qs.forEach(q => {
-    html += `<tr><td>${q.id}</td><td style="text-align:left">${q.q}</td>
-      <td>${q.answer}</td>
+    const isCode = q.qtype === 'code';
+    const badge = isCode
+      ? '<span class="tag tag-code"><i data-lucide="code"></i>编程</span>'
+      : '<span class="tag"><i data-lucide="sigma"></i>数学</span>';
+    const preview = q.q.length > 300 ? q.q.slice(0, 300) + '…' : q.q;
+    const ansText = isCode ? `<span class="muted">执行判分</span>` : q.answer;
+    html += `<tr><td>${q.id}</td><td>${badge}</td><td style="text-align:left">${preview}</td>
+      <td>${ansText}</td>
       <td><button class="btn btn-sm btn-danger" onclick="delQ(${q.id})"><i data-lucide="trash-2"></i>删除</button></td></tr>`;
   });
   $('qTable').innerHTML = html;
@@ -631,26 +1179,47 @@ async function loadSettings(){
   $('s_baseline').value = s.baseline_days;
   $('s_minhist').value = s.min_history_days;
   $('s_drop').value = s.drop_threshold;
-  $('s_tokens').value = s.max_tokens;
+  $('s_tokens').value = s.max_tokens ?? 32768;
+  $('s_input_tokens').value = s.max_input_tokens ?? 262144;
+  $('s_api_timeout').value = s.api_timeout_minutes ?? 15;
+  $('s_reasoning').value = s.reasoning_effort ?? 'xhigh';
+  $('s_anthropic_reasoning').value = s.anthropic_reasoning_effort ?? 'xhigh';
   $('s_conc').value = s.concurrency;
   $('s_conc_fb').value = s.concurrency_fallback;
   $('s_par').value = s.station_parallel;
+  $('s_svg_enabled').checked = s.svg_monitor_enabled;
+  $('s_svg_interval').value = s.svg_interval_minutes;
 }
 
 /** 保存设置 */
 async function saveSettings(){
+  const outputTokens = Number($('s_tokens').value);
+  const inputTokens = Number($('s_input_tokens').value);
+  if(!Number.isSafeInteger(outputTokens) || outputTokens < 1 || !Number.isSafeInteger(inputTokens) || inputTokens < 1){
+    return toast('输出 Token 和输入 Token 预算请输入正整数');
+  }
+  const apiTimeout = Number($('s_api_timeout').value);
+  if(!Number.isInteger(apiTimeout) || apiTimeout < 1 || apiTimeout > 1440){
+    return toast('API 请求超时请输入 1–1440 分钟的整数');
+  }
   const body = {
     schedule_enabled:$('s_enabled').checked, schedule_time:$('s_time').value||'09:00',
     baseline_days:+$('s_baseline').value||7, min_history_days:+$('s_minhist').value||3,
-    drop_threshold:+$('s_drop').value||8, max_tokens:+$('s_tokens').value||512,
+    drop_threshold:+$('s_drop').value||8, max_tokens:outputTokens, max_input_tokens:inputTokens,
+    api_timeout_minutes:apiTimeout,
+    reasoning_effort:$('s_reasoning').value,
+    anthropic_reasoning_effort:$('s_anthropic_reasoning').value,
     concurrency:+$('s_conc').value||5, concurrency_fallback:1,
     station_parallel:+$('s_par').value||10,
+    svg_monitor_enabled:$('s_svg_enabled').checked,
+    svg_interval_minutes:Math.max(1,Math.min(1440,+$('s_svg_interval').value||30)),
   };
   await api('/api/settings', {method:'PUT', body:JSON.stringify(body)});
   toast('设置已保存');
 }
 
 /* ---------------- 启动 ---------------- */
+applyTheme(document.documentElement.dataset.theme || 'light', false);
 refreshIcons();
 initDash();
 </script>
