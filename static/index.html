@@ -93,6 +93,26 @@ label{display:block;margin:13px 0 6px;color:var(--sub);font-size:12px;font-weigh
 .status-pill{display:inline-flex;align-items:center;gap:4px;padding:5px 9px;border-radius:980px;background:var(--pill-bg)}
 .detail-row td{background:var(--row-hover)!important}.detail-label{display:flex;align-items:center;justify-content:flex-end;gap:5px;color:var(--sub)}
 a{color:var(--blue)}
+#relayTable{min-width:1510px}
+#relayTable th:nth-child(6),#relayTable td:nth-child(6){min-width:320px;width:320px}
+#relayTable th:nth-child(7),#relayTable td:nth-child(7){min-width:190px;width:190px}
+.relay-model-cell{min-width:320px!important}
+.relay-model-controls{display:flex;align-items:center;gap:7px;min-width:0}
+.relay-test-model{width:220px!important;min-width:0!important;flex:1 1 auto}
+.relay-fetch-models{flex:0 0 auto;min-width:54px}
+.relay-fetch-models.is-loading,.relay-fetch-models.is-success,.relay-fetch-models.is-error{transform:none}
+.relay-fetch-models.is-loading{color:var(--blue);background:var(--code-bg);cursor:wait}
+.relay-fetch-models.is-loading .lucide,#svgModelFetchBtn.is-loading .lucide,#relayDialogFetchBtn.is-loading .lucide{animation:spin 1s linear infinite}
+.relay-fetch-models.is-success{color:var(--green);background:rgba(36,138,61,.12)}
+.relay-fetch-models.is-error{color:var(--red);background:var(--danger-bg)}
+.relay-model-feedback{display:flex;align-items:center;gap:6px;min-height:17px;margin-top:4px;font-size:10px;line-height:1.3}
+.relay-model-feedback.loading{color:var(--blue)}
+.relay-model-feedback.success{color:var(--green)}
+.relay-model-feedback.error{color:var(--red)}
+.relay-model-feedback .lucide{width:12px;height:12px;margin:0}
+.relay-model-progress{position:relative;display:block;width:92px;height:3px;overflow:hidden;border-radius:99px;background:rgba(77,163,255,.18)}
+.relay-model-progress:after{content:"";position:absolute;inset:0;width:42%;border-radius:inherit;background:var(--blue);animation:modelProgress 1.1s ease-in-out infinite}
+@keyframes modelProgress{0%{transform:translateX(-120%)}100%{transform:translateX(280%)}}
 .lucide{width:15px;height:15px;vertical-align:-3px}.btn .lucide{width:13px;height:13px}nav .lucide{margin-right:5px;width:14px}h2 .lucide{width:17px;height:17px}td .lucide{margin-right:3px}
 .form2{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
 .settings-layout{display:grid;grid-template-columns:.85fr 1.4fr;gap:22px}
@@ -201,7 +221,8 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
         <select id="svgModelSelect" aria-label="选择 SVG 生成模型" style="width:240px" disabled>
           <option value="">全部渠道使用各自默认模型</option>
         </select>
-        <button class="btn btn-sm" type="button" onclick="fetchSelectedRelayModels('svg')"><i data-lucide="refresh-cw"></i>拉取模型</button>
+        <button class="btn btn-sm" id="svgModelFetchBtn" type="button" onclick="fetchSelectedRelayModelsWithFeedback()"><i data-lucide="refresh-cw"></i><span>拉取模型</span></button>
+        <span id="svgModelFeedback" class="relay-model-feedback" aria-live="polite"></span>
         <button class="btn btn-primary" id="svgGenerateBtn" onclick="generateSvgNow()">
           <i data-lucide="wand-sparkles"></i>立即生成动画
         </button>
@@ -323,7 +344,8 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
         <option value="anthropic">Anthropic Messages</option>
       </select>
     </div>
-    <div><label>默认模型名</label><div class="row"><input id="r_model" placeholder="如 gpt-4o / claude-sonnet-4"><button class="btn btn-sm" type="button" onclick="fetchDialogModels()"><i data-lucide="refresh-cw"></i>拉取上游模型</button></div>
+    <div><label>默认模型名</label><div class="row"><input id="r_model" placeholder="如 gpt-4o / claude-sonnet-4"><button class="btn btn-sm" id="relayDialogFetchBtn" type="button" onclick="fetchDialogModels()"><i data-lucide="refresh-cw"></i><span>拉取上游模型</span></button></div>
+      <div id="relayDialogModelFeedback" class="relay-model-feedback" aria-live="polite"></div>
       <select id="r_model_options" class="hidden" onchange="$('r_model').value=this.value"><option value="">已拉取的模型（选择后回填）</option></select></div>
     <div style="grid-column:1/-1"><label for="r_reasoning">渠道推理等级</label><select id="r_reasoning"></select>
       <span class="muted" id="r_reasoning_note">渠道单独配置优先；选择“跟随系统默认”时使用设置页的默认等级。</span></div>
@@ -668,18 +690,18 @@ function updateSvgModelOptions(){
 }
 
 /** 拉取当前渠道模型；source=svg 更新动画下拉，否则更新渠道管理表。 */
-async function fetchRelayModels(name, source='relays'){
+async function fetchRelayModels(name, source='relays', options={}){
   try{
     const result = await api(`/api/relays/${encodeURIComponent(name)}/models`);
     relayModelCache.set(name, result.models || []);
     console.debug(`[模型] ${name} 已缓存 ${(result.models || []).length} 个上游模型`);
     if(source === 'svg') updateSvgModelOptions();
-    else loadRelays();
-    toast(`已拉取 ${result.models.length} 个上游模型`);
+    else if(options.refresh !== false) loadRelays();
+    if(!options.silent) toast(`已拉取 ${result.models.length} 个上游模型`);
     return result.models || [];
   }catch(e){
-    toast('拉取模型失败：'+e.message);
-    return [];
+    if(!options.silent) toast('拉取模型失败：'+e.message);
+    throw e;
   }
 }
 
@@ -688,6 +710,39 @@ function fetchSelectedRelayModels(source='svg'){
   const relay = source === 'svg' ? $('svgRelaySelect')?.value : null;
   if(!relay) return toast('请先选择一个渠道，再拉取上游模型');
   return fetchRelayModels(relay, source);
+}
+
+/** 动画页模型拉取反馈，和渠道表格保持相同的进行中/完成/失败状态。 */
+async function fetchSelectedRelayModelsWithFeedback(){
+  const relay = $('svgRelaySelect')?.value;
+  const button = $('svgModelFetchBtn');
+  const feedback = $('svgModelFeedback');
+  if(!relay) return toast('请先选择一个渠道，再拉取上游模型');
+  if(button?.disabled) return;
+  const label = button?.querySelector('span');
+  if(button) { button.disabled = true; button.classList.remove('is-success','is-error'); button.classList.add('is-loading'); }
+  if(label) label.textContent = '拉取中';
+  if(feedback){ feedback.className = 'relay-model-feedback loading'; feedback.innerHTML = '<span class="relay-model-progress"></span><span>正在读取上游模型…</span>'; }
+  try{
+    const models = await fetchRelayModels(relay, 'svg', {silent:true, refresh:false});
+    if(button) { button.classList.remove('is-loading'); button.classList.add('is-success'); }
+    if(label) label.textContent = '已完成';
+    if(feedback){ feedback.className = 'relay-model-feedback success'; feedback.innerHTML = `<i data-lucide="circle-check"></i><span>已拉取 ${models.length} 个模型</span>`; }
+    refreshIcons();
+    toast(`已拉取 ${models.length} 个上游模型`);
+  }catch(e){
+    if(button) { button.classList.remove('is-loading'); button.classList.add('is-error'); }
+    if(label) label.textContent = '失败';
+    if(feedback){ feedback.className = 'relay-model-feedback error'; feedback.innerHTML = `<i data-lucide="circle-alert"></i><span>${escapeHtml(e.message || '拉取失败')}</span>`; }
+    refreshIcons();
+  }finally{
+    if(button) button.disabled = false;
+    window.setTimeout(() => {
+      if(!button?.isConnected) return;
+      button.classList.remove('is-success','is-error');
+      if(label) label.textContent = '拉取模型';
+    }, 3000);
+  }
 }
 
 /** 渲染 SVG 动画生成表格，生成中记录也保留在表内。 */
@@ -953,17 +1008,18 @@ function watchRun(){
 /** 渲染中转站列表 */
 async function loadRelays(){
   const relays = await api('/api/relays');
+  window.relayRows = relays;
   let html = `<tr><th>选</th><th>名称</th><th>标识</th><th>协议</th><th>Base URL</th><th>测试模型</th><th>推理等级</th>
     <th>API Key</th><th>状态</th><th>操作</th></tr>`;
   if(!relays.length) html += `<tr><td colspan="10" class="muted">暂无中转站，点击右上角新增</td></tr>`;
   relays.forEach(r => {
     const models = relayModelCache.get(r.name) || [r.model];
     const options = models.map(model => `<option value="${escapeHtml(model)}"${model === r.model ? ' selected' : ''}>${escapeHtml(model)}</option>`).join('');
-    html += `<tr><td><input type="checkbox" class="cb-rel" value="${r.name}" style="width:auto"></td>
+    html += `<tr data-relay-row="${escapeHtml(r.name)}"><td><input type="checkbox" class="cb-rel" value="${escapeHtml(r.name)}" style="width:auto"></td>
       <td>${escapeHtml(r.label)}</td><td>${escapeHtml(r.name)}</td>
       <td>${escapeHtml({openai:'OpenAI Chat Completions','openai-responses':'OpenAI Responses',anthropic:'Anthropic Messages'}[r.protocol] || r.protocol)}</td>
-      <td style="max-width:220px;word-break:break-all">${escapeHtml(r.baseUrl)}</td><td><select class="relay-test-model" data-relay-name="${escapeHtml(r.name)}" style="min-width:180px">${options}</select>
-        <button class="btn btn-sm relay-fetch-models" data-relay-name="${escapeHtml(r.name)}" title="从上游刷新模型"><i data-lucide="refresh-cw"></i>拉取</button></td>
+      <td style="max-width:220px;word-break:break-all">${escapeHtml(r.baseUrl)}</td><td class="relay-model-cell"><div class="relay-model-controls"><select class="relay-test-model" data-relay-name="${escapeHtml(r.name)}">${options}</select>
+        <button class="btn btn-sm relay-fetch-models" data-relay-name="${escapeHtml(r.name)}" title="从上游刷新模型"><i data-lucide="refresh-cw"></i><span class="relay-fetch-label">拉取</span></button></div><div class="relay-model-feedback" data-relay-feedback="${escapeHtml(r.name)}"></div></td>
       <td>${r.reasoning_effort == null ? '跟随默认 · ' : ''}${escapeHtml(reasoningLevelLabel(r.effective_reasoning_effort ?? r.reasoning_effort ?? 'xhigh'))}</td>
       <td class="muted">${escapeHtml(r.apiKey)}</td>
       <td class="${r.enabled?'ok':'warn'}"><i data-lucide="${r.enabled?'circle-check':'circle-off'}"></i>${r.enabled?'启用':'停用'}</td>
@@ -977,10 +1033,72 @@ async function loadRelays(){
     const model = [...$('relayTable').querySelectorAll('.relay-test-model')].find(select => select.dataset.relayName === name)?.value;
     triggerRun([name], model ? {[name]: model} : {});
   });
-  $('relayTable').querySelectorAll('.relay-fetch-models').forEach(btn => btn.onclick = () => fetchRelayModels(btn.dataset.relayName));
+  $('relayTable').querySelectorAll('.relay-fetch-models').forEach(btn => btn.onclick = () => fetchRelayModelsWithFeedback(btn.dataset.relayName, btn));
   $('relayTable').querySelectorAll('.relay-edit-btn').forEach(btn => btn.onclick = () => openRelayDialog(btn.dataset.relayName));
   $('relayTable').querySelectorAll('.relay-delete-btn').forEach(btn => btn.onclick = () => delRelay(btn.dataset.relayName));
   refreshIcons();
+}
+
+/** 拉取完成后只更新当前行下拉选项，避免整张表闪烁并保留完成态。 */
+function updateRelayModelSelect(name){
+  const select = [...document.querySelectorAll('.relay-test-model')]
+    .find(node => node.dataset.relayName === name);
+  const row = (window.relayRows || []).find(item => item.name === name);
+  if(!select || !row) return;
+  const models = relayModelCache.get(name) || [row.model];
+  const current = select.value || row.model;
+  select.innerHTML = models.map(model => `<option value="${escapeHtml(model)}"${model === current ? ' selected' : ''}>${escapeHtml(model)}</option>`).join('');
+  if(models.includes(current)) select.value = current;
+}
+
+/** 带明确视觉反馈的渠道模型拉取：按钮、进度条和结果文案同步更新。 */
+async function fetchRelayModelsWithFeedback(name, button){
+  if(!button || button.disabled) return;
+  const feedback = document.querySelector(`[data-relay-feedback="${CSS.escape(name)}"]`);
+  const label = button.querySelector('.relay-fetch-label');
+  const originalLabel = label?.textContent || '拉取';
+  button.disabled = true;
+  button.classList.remove('is-success','is-error');
+  button.classList.add('is-loading');
+  if(label) label.textContent = '拉取中';
+  if(feedback){
+    feedback.className = 'relay-model-feedback loading';
+    feedback.innerHTML = '<span class="relay-model-progress"></span><span>正在连接上游并读取模型列表…</span>';
+  }
+  try{
+    const models = await fetchRelayModels(name, 'relays', {silent:true, refresh:false});
+    updateRelayModelSelect(name);
+    button.classList.remove('is-loading');
+    button.classList.add('is-success');
+    if(label) label.textContent = '已完成';
+    if(feedback){
+      feedback.className = 'relay-model-feedback success';
+      feedback.innerHTML = `<i data-lucide="circle-check"></i><span>已拉取 ${models.length} 个模型，可直接选择</span>`;
+    }
+    refreshIcons();
+    window.setTimeout(() => {
+      if(!button.isConnected) return;
+      button.classList.remove('is-success');
+      if(label) label.textContent = originalLabel;
+    }, 2600);
+  }catch(e){
+    // fetchRelayModels 已负责 toast；这里补充行内失败态，用户无需猜测是否完成。
+    button.classList.remove('is-loading');
+    button.classList.add('is-error');
+    if(label) label.textContent = '失败';
+    if(feedback){
+      feedback.className = 'relay-model-feedback error';
+      feedback.innerHTML = `<i data-lucide="circle-alert"></i><span>${escapeHtml(e.message || '拉取失败')}</span>`;
+    }
+    refreshIcons();
+    window.setTimeout(() => {
+      if(!button.isConnected) return;
+      button.classList.remove('is-error');
+      if(label) label.textContent = originalLabel;
+    }, 4000);
+  }finally{
+    button.disabled = false;
+  }
 }
 
 /** 推理等级使用协议原生档位；继承系统默认与省略请求参数分别表示。 */
@@ -1049,10 +1167,36 @@ function fillDialogModelOptions(models){
 /** 编辑弹窗专用的模型拉取入口；新增渠道需先保存一次配置。 */
 async function fetchDialogModels(){
   const name = editingRelay || $('r_name').value.trim();
+  const button = $('relayDialogFetchBtn');
+  const feedback = $('relayDialogModelFeedback');
   if(!name) return toast('请先填写渠道唯一标识');
   if(!editingRelay) return toast('请先保存新渠道，再拉取上游模型');
-  const models = await fetchRelayModels(name, 'dialog');
-  fillDialogModelOptions(models);
+  if(button?.disabled) return;
+  const label = button?.querySelector('span');
+  if(button){ button.disabled = true; button.classList.remove('is-success','is-error'); button.classList.add('is-loading'); }
+  if(label) label.textContent = '拉取中';
+  if(feedback){ feedback.className = 'relay-model-feedback loading'; feedback.innerHTML = '<span class="relay-model-progress"></span><span>正在读取上游模型…</span>'; }
+  try{
+    const models = await fetchRelayModels(name, 'dialog', {silent:true, refresh:false});
+    fillDialogModelOptions(models);
+    if(button){ button.classList.remove('is-loading'); button.classList.add('is-success'); }
+    if(label) label.textContent = '已完成';
+    if(feedback){ feedback.className = 'relay-model-feedback success'; feedback.innerHTML = `<i data-lucide="circle-check"></i><span>已拉取 ${models.length} 个模型</span>`; }
+    toast(`已拉取 ${models.length} 个上游模型`);
+  }catch(e){
+    if(button){ button.classList.remove('is-loading'); button.classList.add('is-error'); }
+    if(label) label.textContent = '失败';
+    if(feedback){ feedback.className = 'relay-model-feedback error'; feedback.innerHTML = `<i data-lucide="circle-alert"></i><span>${escapeHtml(e.message || '拉取失败')}</span>`; }
+    toast('拉取模型失败：' + e.message);
+  }finally{
+    refreshIcons();
+    if(button) button.disabled = false;
+    window.setTimeout(() => {
+      if(!button?.isConnected) return;
+      button.classList.remove('is-success','is-error');
+      if(label) label.textContent = '拉取上游模型';
+    }, 3000);
+  }
 }
 
 /** 保存中转站（新增或更新） */
