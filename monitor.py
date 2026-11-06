@@ -28,6 +28,12 @@ from concurrent import futures
 from pathlib import Path
 
 from app_paths import RESOURCE_DIR, USER_DATA_DIR
+from request_options import (
+    DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, token_budget,
+    DEFAULT_API_TIMEOUT_MINUTES, api_timeout_seconds,
+    DEFAULT_REASONING_EFFORT, reasoning_setting_key, resolve_reasoning_effort,
+    openai_chat_params, anthropic_message_params, responses_params, normalize_base_url,
+)
 
 # ---------------- 目录与文件路径常量 ----------------
 BASE_DIR = RESOURCE_DIR
@@ -57,15 +63,31 @@ def yaml_str(value):
     return json.dumps(str(value), ensure_ascii=False)
 
 
-def gen_provider_yaml(relay, questions, max_tokens):
+def gen_provider_yaml(relay, questions, max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+                      reasoning_effort=DEFAULT_REASONING_EFFORT,
+                      api_timeout_minutes=DEFAULT_API_TIMEOUT_MINUTES):
     """为单个中转站生成 promptfoo 的 YAML 配置内容（单 provider + 固定测试题）。
 
-    protocol 为 openai 时 baseUrl 需带 /v1；为 anthropic 时 baseUrl 不带 /v1。
+    协议字段按模型能力下发：推理模型才带 reasoning 参数，非推理模型才带 temperature；
+    max_tokens 与 max_completion_tokens 只发送其中一个，避免上游判为非法字段组合。
+    Anthropic 使用 SDK 基础地址（去掉 /v1），由 SDK 自行拼接 /v1/messages。
     """
-    if relay.get("protocol", "openai") == "anthropic":
-        provider_id = f"anthropic:messages:{relay['model']}"
+    protocol = relay.get("protocol", "openai")
+    reasoning_effort = resolve_reasoning_effort(relay, reasoning_effort)
+    max_tokens = token_budget(max_tokens, "输出 Token 预算")
+    timeout_ms = api_timeout_seconds(api_timeout_minutes) * 1000
+    if protocol == "anthropic":
+        # 原生 Anthropic provider 未暴露 SDK 超时设置，通过适配器保留其请求和判分行为。
+        provider_id = str(BASE_DIR / "anthropic_provider.cjs")
+        params = anthropic_message_params(relay["model"], reasoning_effort)
+    elif protocol == "openai-responses":
+        # 项目内适配器负责解析 Responses SSE，并统一请求超时和错误格式。
+        provider_id = str(BASE_DIR / "openai_responses_provider.cjs")
+        params = responses_params(relay["model"], reasoning_effort)
     else:
-        provider_id = f"openai:chat:{relay['model']}"
+        # 项目内适配器严格按配置字段构造请求体，不再依赖 promptfoo 按模型名猜测。
+        provider_id = str(BASE_DIR / "openai_chat_provider.cjs")
+        params = openai_chat_params(relay["model"], reasoning_effort)
 
     lines = [
         "description: " + yaml_str(f"每日监控-{relay['label']}"),
@@ -75,14 +97,48 @@ def gen_provider_yaml(relay, questions, max_tokens):
         "  - id: " + yaml_str(provider_id),
         "    label: " + yaml_str(relay["label"]),
         "    config:",
-        "      apiBaseUrl: " + yaml_str(relay["baseUrl"]),
+        "      apiBaseUrl: " + yaml_str(normalize_base_url(protocol, relay["baseUrl"])),
         "      apiKey: " + yaml_str(relay["apiKey"]),
-        "      temperature: 0",
-        "      max_tokens: " + str(int(max_tokens)),
-        "tests:",
+        "      model: " + yaml_str(relay["model"]),
     ]
+    if protocol == "openai-responses":
+        lines.append("      max_output_tokens: " + str(max_tokens))
+        lines.append("      requestTimeoutMs: " + str(timeout_ms))
+        lines.append("      stream: true")
+        if params:
+            lines.append("      reasoning_effort: " + yaml_str(params["reasoning"]["effort"]))
+    elif protocol == "anthropic":
+        lines.append("      max_tokens: " + str(max_tokens))
+        lines.append("      requestTimeoutMs: " + str(timeout_ms))
+        lines.append("      showThinking: false")
+        if params["thinking"]:
+            lines.append("      thinking: " + json.dumps(params["thinking"]))
+        if params["output_config"]:
+            lines.append("      extra_body: " + json.dumps({"output_config": params["output_config"]}))
+    else:
+        lines.append("      max_tokens_field: " + yaml_str(params["max_tokens_field"]))
+        lines.append("      max_tokens: " + str(max_tokens))
+        lines.append("      requestTimeoutMs: " + str(timeout_ms))
+        if params["reasoning_effort"]:
+            lines.append("      reasoning_effort: " + yaml_str(params["reasoning_effort"]))
+        if params["temperature"] is not None:
+            lines.append("      temperature: " + str(params["temperature"]))
+    lines.append("tests:")
     for item in questions:
-        ans = str(item["answer"]).strip()
+        ans = str(item.get("answer") or "").strip()
+        # 编程题：判分在本地真实执行代码完成（codegrade），promptfoo 断言恒真，
+        # 其 success 仅反映 API 是否正常返回，最终分数由本地判分覆盖
+        if item.get("qtype") == "code":
+            assert_lines = [
+                "      - type: javascript",
+                "        value: " + yaml_str("\nreturn true;"),
+            ]
+            lines += [
+                "  - vars:",
+                "      question: " + yaml_str(item["q"]),
+                "    assert:",
+            ] + assert_lines
+            continue
         # 纯数字答案用数值精确匹配（防止答案 72 误匹配 172）；其他答案用 contains
         # 注意：promptfoo 的 javascript 断言要求代码以 return 开头（函数体形式）
         if re.fullmatch(r"-?\d+(\.\d+)?", ans):
@@ -159,6 +215,75 @@ def _merge_retry_results(original_path, retry_path, retry_questions):
         json.dump(original, f, ensure_ascii=False)
 
 
+def grade_code_questions(out_json, questions, log=print):
+    """对结果文件中的编程题执行本地真实代码判分（EvalPlus diff-testing）。
+
+    promptfoo 对编程题只负责调 API 拿输出（断言恒真）；本函数把每道编程题的
+    模型输出提取代码、与参考实现在强化输入上对比执行，通过则 1 分否则 0 分，
+    并回写结果 JSON。真错误题（无输出）保持原状不参与计分。
+    判分并行执行（模型代码沙箱子进程，超时 30 秒）。
+    """
+    payload_by_q = {}
+    for item in questions or []:
+        if item.get("qtype") == "code" and item.get("test"):
+            try:
+                payload_by_q[item["q"]] = json.loads(item["test"])
+            except Exception:
+                continue
+    if not payload_by_q:
+        return  # 本轮无编程题
+    try:
+        with open(out_json, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return
+    rows = _result_rows(data)
+    targets = []  # (行索引, payload, 模型输出)
+    for i, r in enumerate(rows):
+        question = ((r.get("vars") or {}).get("question") or
+                    ((r.get("testCase") or {}).get("vars") or {}).get("question"))
+        payload = payload_by_q.get(question)
+        if payload is None:
+            continue
+        output = (r.get("response") or {}).get("output")
+        if output is None or not str(output).strip():
+            continue  # 真错误（超时/限流等未作答）：不计分逻辑保持不变
+        targets.append((i, payload, str(output)))
+    if not targets:
+        return
+
+    import codegrade
+    results = {}
+    with futures.ThreadPoolExecutor(max_workers=6) as pool:
+        future_map = {
+            pool.submit(codegrade.grade, output, payload): i
+            for i, payload, output in targets
+        }
+        for fut in futures.as_completed(future_map):
+            i = future_map[fut]
+            try:
+                results[i] = bool(fut.result())
+            except Exception:
+                results[i] = False
+
+    passed = 0
+    for i, ok in results.items():
+        row = rows[i]
+        row["score"] = 1.0 if ok else 0.0
+        row["success"] = ok
+        # 兼容 promptfoo 的嵌套 gradingResult 结构（若有）
+        gr = row.get("gradingResult")
+        if isinstance(gr, dict):
+            gr["pass"] = ok
+            gr["score"] = 1.0 if ok else 0.0
+            if not ok:
+                gr["reason"] = "本地代码执行判分未通过"
+        passed += 1 if ok else 0
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    log(f"编程题本地判分完成：{passed}/{len(results)} 通过（沙箱执行强化测试）")
+
+
 def new_control():
     """创建一个评测控制字典（线程间共享）。
 
@@ -210,7 +335,8 @@ def kill_all_processes(control):
     return killed
 
 
-def _run_streaming(cmd, log=print, control=None, pf_config_dir=None):
+def _run_streaming(cmd, log=print, control=None, pf_config_dir=None,
+                   api_timeout_minutes=DEFAULT_API_TIMEOUT_MINUTES):
     """流式执行 promptfoo 命令：逐行读取输出，解析逐题进度并按批回报。
 
     进度来源：LOG_LEVEL=debug 时 promptfoo 逐题打印
@@ -220,7 +346,9 @@ def _run_streaming(cmd, log=print, control=None, pf_config_dir=None):
     pf_config_dir 指定 promptfoo 独立配置目录（并行时隔离各自的 SQLite DB）。
     返回 (returncode, 输出末尾文本)；输出仅保留最近 60 行用于错误诊断。
     """
-    env = {**os.environ, "LOG_LEVEL": "debug", "PROMPTFOO_LOG_LEVEL": "debug"}
+    timeout_seconds = api_timeout_seconds(api_timeout_minutes)
+    env = {**os.environ, "LOG_LEVEL": "debug", "PROMPTFOO_LOG_LEVEL": "debug",
+           "REQUEST_TIMEOUT_MS": str(timeout_seconds * 1000)}
     if pf_config_dir:
         Path(pf_config_dir).mkdir(parents=True, exist_ok=True)
         env["PROMPTFOO_CONFIG_DIR"] = str(pf_config_dir)
@@ -246,10 +374,33 @@ def _run_streaming(cmd, log=print, control=None, pf_config_dir=None):
     total = None
     retry_count = 0   # 瞬时失败但已自动重试的次数（非题目失败）
     fatal_count = 0   # 重试耗尽、题目彻底失败的次数
+
+    # Anthropic SDK 默认最多重试两次且期间可能无日志，预留三次请求及退避余量。
+    # 看门狗只兜底进程挂起；单次 API 超时由请求层负责，暂停时间不计入无输出时间。
+    watchdog_seconds = max(300, timeout_seconds * 3 + 180)
+    state = {"last_activity": time.monotonic(), "killed": False}
+    def _watchdog():
+        """每 15 秒检查一次输出活跃时间，超时则杀进程。"""
+        while True:
+            time.sleep(15)
+            if proc.poll() is not None:
+                return
+            if control is not None and control.get("paused"):
+                state["last_activity"] = time.monotonic()
+                continue
+            if time.monotonic() - state["last_activity"] > watchdog_seconds:
+                proc.kill()
+                state["killed"] = True
+                return
+    import threading as _th
+    wd = _th.Thread(target=_watchdog, daemon=True)
+    wd.start()
+
     try:
         for line in proc.stdout:
             line = line.rstrip()
             tail.append(line)
+            state["last_activity"] = time.monotonic()
             # 强制停止：杀掉子进程并退出读取循环
             if control is not None and control.get("stop"):
                 proc.kill()
@@ -280,13 +431,21 @@ def _run_streaming(cmd, log=print, control=None, pf_config_dir=None):
                         last_reported = done
     finally:
         proc.wait()
+        if state.get("killed"):
+            message = (f"评测进程连续 {watchdog_seconds // 60} 分钟无输出，已终止"
+                       f"（单次 API 请求超时 {timeout_seconds // 60} 分钟）")
+            log(message)
+            tail.append(message)
         if control is not None and proc in control["procs"]:
             control["procs"].remove(proc)
     return proc.returncode, "\n".join(tail)
 
 
 def run_promptfoo(yaml_path, concurrency=5, fallback_concurrency=1, log=print,
-                  control=None, tag=None, relay=None, questions=None, max_tokens=512):
+                  control=None, tag=None, relay=None, questions=None,
+                  max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+                  reasoning_effort=DEFAULT_REASONING_EFFORT,
+                  api_timeout_minutes=DEFAULT_API_TIMEOUT_MINUTES):
     """调用 promptfoo eval 执行测试并解析结果。
 
     返回 (score, passed, total, latency_ms, error_info)。
@@ -325,7 +484,7 @@ def run_promptfoo(yaml_path, concurrency=5, fallback_concurrency=1, log=print,
     rc, out_tail = 1, ""
     for extra in (["--no-cache"], []):
         rc, out_tail = _run_streaming(base_cmd + extra, log=log, control=control,
-                                      pf_config_dir=pf_dir)
+                                      pf_config_dir=pf_dir, api_timeout_minutes=api_timeout_minutes)
         # 用户请求停止：不再重试/降级，直接终止
         if control is not None and control.get("stop"):
             sys.exit("已停止")
@@ -342,12 +501,15 @@ def run_promptfoo(yaml_path, concurrency=5, fallback_concurrency=1, log=print,
         retry_items = [item for item in questions if item.get("q") in set(rate_questions)]
         retry_yaml = GEN_DIR / f"retry_429_{tag or 'single'}.yaml"
         retry_json = GEN_DIR / f"retry_429_{tag or 'single'}.json"
-        retry_yaml.write_text(gen_provider_yaml(relay, retry_items, max_tokens), encoding="utf-8")
+        retry_yaml.write_text(
+            gen_provider_yaml(relay, retry_items, max_tokens, reasoning_effort, api_timeout_minutes),
+            encoding="utf-8"
+        )
         log(f"检测到 {len(retry_items)} 题遭遇 429，立即降为并发 1，仅重新评测失败题")
         fallback_cmd = launcher + ["eval", "-c", str(retry_yaml), "-o", str(retry_json),
                                    "-j", "1", "--no-cache"]
         rc, out_tail = _run_streaming(fallback_cmd, log=log, control=control,
-                                      pf_config_dir=pf_dir)
+                                      pf_config_dir=pf_dir, api_timeout_minutes=api_timeout_minutes)
         if control is not None and control.get("stop"):
             sys.exit("已停止")
         if rc not in (0, 100):
@@ -356,6 +518,9 @@ def run_promptfoo(yaml_path, concurrency=5, fallback_concurrency=1, log=print,
         _merge_retry_results(out_json, retry_json, set(rate_questions))
         remaining = len(_rate_limited_questions(out_json))
         log(f"429 失败题增量重测完成，恢复 {len(retry_items) - remaining} 题，仍失败 {remaining} 题")
+
+    # 编程题：本地沙箱真实执行判分（在 429 合并后、汇总前覆盖分数）
+    grade_code_questions(out_json, questions, log=log)
 
     return parse_results(out_json)
 
@@ -440,13 +605,8 @@ def parse_results(path):
     return score, passed, valid, latency, error_info
 
 
-def init_db():
-    """初始化全部 SQLite 基础表，并兼容历史运行表结构迁移。"""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH)
-    con.execute(
-        "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)"
-    )
+def init_relay_schema(con):
+    """统一初始化和迁移渠道配置，旧渠道以空值继承系统默认推理等级。"""
     con.execute(
         """CREATE TABLE IF NOT EXISTS relays(
                name TEXT PRIMARY KEY,
@@ -455,15 +615,57 @@ def init_db():
                baseUrl TEXT NOT NULL,
                apiKey TEXT NOT NULL,
                model TEXT NOT NULL,
-               enabled INTEGER NOT NULL DEFAULT 1)"""
+               enabled INTEGER NOT NULL DEFAULT 1,
+               reasoning_effort TEXT)"""
     )
+    columns = {row[1] for row in con.execute("PRAGMA table_info(relays)")}
+    if "reasoning_effort" not in columns:
+        con.execute("ALTER TABLE relays ADD COLUMN reasoning_effort TEXT")
+        con.commit()
+        print("[渠道] 已迁移推理等级字段，现有渠道继承系统默认值")
+
+
+def migrate_token_budget_settings(con):
+    """一次性升级旧版默认输出预算；保留用户单独设定的数值和后续修改。"""
+    rows = dict(con.execute("SELECT key, value FROM settings").fetchall())
+    if rows.get("token_budget_defaults_version") == "1":
+        return rows
+    if rows.get("max_tokens") == "512":
+        rows["max_tokens"] = str(DEFAULT_MAX_OUTPUT_TOKENS)
+        con.execute("UPDATE settings SET value=? WHERE key='max_tokens'", (rows["max_tokens"],))
+        print(f"[设置迁移] 旧版默认输出额度 512 已升级为 {DEFAULT_MAX_OUTPUT_TOKENS} Token")
+    con.execute(
+        "INSERT OR REPLACE INTO settings(key, value) VALUES('token_budget_defaults_version', '1')"
+    )
+    con.commit()
+    rows["token_budget_defaults_version"] = "1"
+    return rows
+
+
+def init_db():
+    """初始化全部 SQLite 基础表，并兼容历史运行表结构迁移。"""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB_PATH)
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)"
+    )
+    init_relay_schema(con)
     con.execute(
         """CREATE TABLE IF NOT EXISTS questions(
                id INTEGER PRIMARY KEY AUTOINCREMENT,
                q TEXT NOT NULL,
                answer TEXT NOT NULL,
-               version_id INTEGER)"""
+               version_id INTEGER,
+               qtype TEXT NOT NULL DEFAULT 'math',
+               test TEXT,
+               entry_point TEXT)"""
     )
+    # 旧表迁移：补充编程题判分所需列（math 为默认题型，旧数据不受影响）
+    q_cols = [r[1] for r in con.execute("PRAGMA table_info(questions)")]
+    if q_cols and "qtype" not in q_cols:
+        con.execute("ALTER TABLE questions ADD COLUMN qtype TEXT NOT NULL DEFAULT 'math'")
+        con.execute("ALTER TABLE questions ADD COLUMN test TEXT")
+        con.execute("ALTER TABLE questions ADD COLUMN entry_point TEXT")
     con.execute(
         """CREATE TABLE IF NOT EXISTS question_versions(
                id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -485,6 +687,48 @@ def init_db():
                latency_ms REAL,
                error_detail TEXT,
                created_at TEXT NOT NULL)"""
+    )
+    # AI SVG 动画生成记录：保留渠道快照和完整状态，支持重启后继续查看历史。
+    con.execute(
+        """CREATE TABLE IF NOT EXISTS svg_generations(
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               relay TEXT NOT NULL,
+               relay_label TEXT,
+               model_id TEXT,
+               status TEXT NOT NULL,
+               trigger TEXT NOT NULL DEFAULT 'manual',
+               svg_content TEXT,
+               error_detail TEXT,
+               requested_at TEXT NOT NULL,
+               started_at TEXT,
+               completed_at TEXT)"""
+    )
+    # 同一渠道同一时间只允许一条活动任务，避免重复请求造成重复扣费。
+    # 先收敛旧版本可能写入的重复活动记录，再建立 SQLite 部分唯一索引。
+    duplicates = con.execute(
+        """SELECT id FROM svg_generations
+           WHERE status IN ('queued','generating')
+             AND id NOT IN (
+                 SELECT MAX(id) FROM svg_generations
+                 WHERE status IN ('queued','generating') GROUP BY relay
+             )"""
+    ).fetchall()
+    if duplicates:
+        duplicate_ids = [row[0] for row in duplicates]
+        placeholders = ",".join("?" for _ in duplicate_ids)
+        con.execute(
+            f"""UPDATE svg_generations
+                SET status='failed',
+                    error_detail='发现重复的活动任务，已停止旧任务',
+                    completed_at=COALESCE(completed_at, datetime('now','localtime'))
+                WHERE id IN ({placeholders})""",
+            duplicate_ids,
+        )
+        print(f"[svg] 数据迁移：已关闭 {len(duplicate_ids)} 条重复活动任务")
+    con.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS ux_svg_generations_active_relay
+           ON svg_generations(relay)
+           WHERE status IN ('queued','generating')"""
     )
     # 旧表迁移：无 run_id 列（旧主键 date+relay，一天只存一次）→ 重建为多次记录表
     cols = [r[1] for r in con.execute("PRAGMA table_info(runs)")]
@@ -613,10 +857,13 @@ def load_questions(con):
     vid = active_question_version(con)
     if vid is not None:
         rows = con.execute(
-            "SELECT q, answer FROM questions WHERE version_id=? ORDER BY id", (vid,)
+            "SELECT q, answer, qtype, test, entry_point FROM questions "
+            "WHERE version_id=? ORDER BY id", (vid,)
         ).fetchall()
         if rows:
-            return [{"q": q, "answer": a} for q, a in rows]
+            return [{"q": q, "answer": a, "qtype": qt or "math",
+                     "test": t, "entry_point": ep}
+                    for q, a, qt, t, ep in rows]
     if DEFAULT_QUESTIONS_PATH.exists():
         with open(DEFAULT_QUESTIONS_PATH, "r", encoding="utf-8") as f:
             items = json.load(f)
@@ -648,30 +895,22 @@ def load_questions(con):
 
 def load_relays(con):
     """优先从数据库读中转站列表；库为空时用 config.json 初始化并返回。"""
-    con.execute(
-        """CREATE TABLE IF NOT EXISTS relays(
-               name TEXT PRIMARY KEY,
-               label TEXT NOT NULL,
-               protocol TEXT NOT NULL DEFAULT 'openai',
-               baseUrl TEXT NOT NULL,
-               apiKey TEXT NOT NULL,
-               model TEXT NOT NULL,
-               enabled INTEGER NOT NULL DEFAULT 1)"""
-    )
+    init_relay_schema(con)
     rows = con.execute(
-        "SELECT name, label, protocol, baseUrl, apiKey, model, enabled FROM relays ORDER BY rowid"
+        "SELECT name, label, protocol, baseUrl, apiKey, model, enabled, reasoning_effort "
+        "FROM relays ORDER BY rowid"
     ).fetchall()
     if rows:
         return [dict(zip(("name", "label", "protocol", "baseUrl", "apiKey",
-                          "model", "enabled"), r)) for r in rows]
+                          "model", "enabled", "reasoning_effort"), r)) for r in rows]
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     for r in cfg.get("relays", []):
         con.execute(
-            "INSERT INTO relays(name, label, protocol, baseUrl, apiKey, model, enabled) "
-            "VALUES(?,?,?,?,?,?,1)",
+            "INSERT INTO relays(name, label, protocol, baseUrl, apiKey, model, enabled, reasoning_effort) "
+            "VALUES(?,?,?,?,?,?,1,?)",
             (r["name"], r["label"], r.get("protocol", "openai"),
-             r["baseUrl"], r["apiKey"], r["model"]),
+             r["baseUrl"], r["apiKey"], r["model"], r.get("reasoning_effort")),
         )
     con.commit()
     return cfg.get("relays", [])
@@ -964,8 +1203,25 @@ def run_all(relays=None, settings=None, questions=None, log=print, control=None)
             "baseline_days": raw.get("baseline_days", 7),
             "min_history_days": raw.get("min_history_days", 3),
             "drop_threshold": raw.get("drop_threshold", 8),
+            "max_tokens": raw.get("max_tokens", DEFAULT_MAX_OUTPUT_TOKENS),
+            "max_input_tokens": raw.get("max_input_tokens", DEFAULT_MAX_INPUT_TOKENS),
+            "api_timeout_minutes": raw.get("api_timeout_minutes", DEFAULT_API_TIMEOUT_MINUTES),
+            "reasoning_effort": raw.get("reasoning_effort", DEFAULT_REASONING_EFFORT),
+            "anthropic_reasoning_effort": raw.get("anthropic_reasoning_effort", DEFAULT_REASONING_EFFORT),
         }
-    max_tokens = settings.get("max_tokens", 512)
+        # 命令行评测同样使用界面保存的 API 参数，避免两个入口产生不同请求。
+        stored = migrate_token_budget_settings(con)
+        for key in ("reasoning_effort", "anthropic_reasoning_effort", "api_timeout_minutes",
+                    "max_tokens", "max_input_tokens"):
+            if key in stored:
+                settings[key] = stored[key]
+    max_tokens = token_budget(settings.get("max_tokens", DEFAULT_MAX_OUTPUT_TOKENS), "输出 Token 预算")
+    max_input_tokens = token_budget(
+        settings.get("max_input_tokens", DEFAULT_MAX_INPUT_TOKENS), "输入 Token 预算"
+    )
+    api_timeout_minutes = api_timeout_seconds(
+        settings.get("api_timeout_minutes", DEFAULT_API_TIMEOUT_MINUTES)
+    ) // 60
     concurrency = int(settings.get("concurrency", 5))
     fallback_cc = 1
     station_parallel = int(settings.get("station_parallel", 10))  # 站级并行上限
@@ -989,17 +1245,28 @@ def run_all(relays=None, settings=None, questions=None, log=print, control=None)
         if control is not None and control.get("stop"):
             return relay, None, "stopped"
         label = relay["label"]
+        protocol = relay.get("protocol", "openai")
+        reasoning_effort = resolve_reasoning_effort(
+            relay, settings.get(reasoning_setting_key(protocol), DEFAULT_REASONING_EFFORT)
+        )
+        log(f"[{label}] 开始评测（{len(questions)} 题，站内并发 {concurrency}）")
+        log(f"[{label}] 单次 API 请求超时：{api_timeout_minutes} 分钟")
+        log(f"[{label}] Token 预算：输出 {max_tokens}，输入 {max_input_tokens}（完整发送输入）")
+        log(f"[{label}] {protocol} 请求推理等级：{reasoning_effort}"
+            f"（{'继承系统默认' if relay.get('reasoning_effort') is None else '渠道单独配置'}）")
         try:
             yaml_path = GEN_DIR / f"config_{relay['name']}.yaml"
             yaml_path.write_text(
-                gen_provider_yaml(relay, questions, max_tokens), encoding="utf-8"
+                gen_provider_yaml(relay, questions, max_tokens, reasoning_effort, api_timeout_minutes),
+                encoding="utf-8"
             )
             result = run_promptfoo(
                 yaml_path, concurrency=concurrency,
                 fallback_concurrency=fallback_cc,
                 log=lambda m, lbl=label: log(f"[{lbl}] {m}"),
                 control=control, tag=relay["name"], relay=relay,
-                questions=questions, max_tokens=max_tokens,
+                questions=questions, max_tokens=max_tokens, reasoning_effort=reasoning_effort,
+                api_timeout_minutes=api_timeout_minutes,
             )
             return relay, result, None
         except SystemExit as e:

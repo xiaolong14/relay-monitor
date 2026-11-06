@@ -29,7 +29,11 @@
     "baseline_days": 7,
     "min_history_days": 3,
     "drop_threshold": 8,
-    "max_tokens": 512
+    "max_tokens": 32768,
+    "max_input_tokens": 262144,
+    "api_timeout_minutes": 15,
+    "reasoning_effort": "xhigh",
+    "anthropic_reasoning_effort": "xhigh"
   },
   "questions": [
     { "q": "计算 17×23-45，只输出最终数字，不要写任何其他内容", "answer": "346" },

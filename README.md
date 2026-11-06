@@ -14,7 +14,7 @@
 单次跑分只能看到「当前分数」，无法发现**偷偷降智**。判断掺水需要三件事：
 
 1. **固定题库** — 每天同一批题，答案稳定可比
-2. **固定参数** — 温度 0、固定 max_tokens，排除随机性
+2. **固定参数** — 温度 0、固定 max_tokens，OpenAI 推理等级默认 `xhigh`，保持评测条件一致
 3. **连续历史基线** — 当日分数 vs 近 7 天滑动基线，跌破了才叫掺水
 
 Relay Monitor 把这三件事打包成一个可以长期挂着跑的 Web 系统：
@@ -31,10 +31,13 @@ Relay Monitor 把这三件事打包成一个可以长期挂着跑的 Web 系统�
 - **掺水判定**：当日分数跌破滑动基线阈值 → 疑似掺水；回升 → 已恢复；每天自动生成 HTML 日报与推荐站点
 - **站点并行 + 站内并发**：多个中转站同时测试（上限 10），每站内部并发独立配置（默认 5）
 - **智能 429 处理**：遇限流立即降为并发 1，**只重测失败的题**，已成功的题不会重复请求
+- **三种 API 协议**：支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages；Responses 使用 SSE 流式接收，长输出无需等待完整响应才开始传输
+- **渠道推理等级**：两种 OpenAI 协议与 Anthropic Messages 均可单独配置推理等级；未单独配置时继承对应协议的系统默认值（默认 `xhigh`），题库评测、429 重测和 SVG 动画生成使用同一渠道配置
 - **精准错误剔除**：仅超时/限流/网络失败等「模型未作答」的真错误剔除出分母；答错的题正常计 0 分（判分严格，不会虚高）
 - **一天多次评测**：每次记录独立保留，日视图显示加权平均分，可展开查看每次明细
 - **模型快照**：每次评测永久保存当时的模型 ID 和站点名称；后续修改站点配置不会篡改历史记录
 - **实时进度**：评测中每完成 5 题打一条进度日志，支持暂停/继续/强制停止（进程级挂起）
+- **AI SVG 动画监控**：默认每 30 分钟让各启用中转站生成一次「鹈鹕骑自行车」循环动画；可随时手动生成，在表格查看渠道、模型、生成状态、完成时间和动画预览
 - **Web 管理界面**：中转站增删改查（Key 脱敏）、题库版本管理与恢复、定时时间与判定参数可视化设置、历史趋势图
 
 ### 界面预览
@@ -153,10 +156,11 @@ node node_modules/promptfoo/dist/src/main.js --version   # 输出 0.115.0 即成
 |---|---|---|
 | 显示名称 | 界面上显示的名字 | `A站` |
 | 唯一标识 | 英文标识（用于存储） | `relay-a` |
-| 协议 | OpenAI 兼容 或 Anthropic 原生 | `OpenAI` |
-| Base URL | API 地址（OpenAI 兼容协议需带 `/v1`） | `https://xxx.com/v1` |
+| 协议 | OpenAI Chat Completions / OpenAI Responses / Anthropic Messages | `OpenAI Responses` |
+| Base URL | API 地址（两种 OpenAI 协议需带 `/v1`） | `https://xxx.com/v1` |
 | API Key | 中转站给你的密钥 | `sk-...` |
 | 模型名 | 要测试的模型 | `gpt-4o` / `claude-sonnet-4` |
+| 渠道推理等级 | 按所选协议展示等级；渠道配置优先，可跟随系统默认 | `xhigh` |
 
 ### 2. 导入题库
 
@@ -176,6 +180,22 @@ node node_modules/promptfoo/dist/src/main.js --version   # 输出 0.115.0 即成
 
 点右上角「立即评测」（或单站行的「测试」按钮）。实时进度每 5 题刷新一次，
 结束后仪表盘显示各站分数。**前 3 天为观察期**（积累基线），第 4 天起开始正式掺水判定。
+
+仪表盘中的「AI 鹈鹕骑车动画」表格会显示动画生成状态。自动监控默认每 30 分钟运行一次，服务启动后 30 分钟执行首轮；通过「立即生成动画」可随时触发，不需要等到下一轮定时。默认对全部启用的中转站生成，也可从下拉框选择某一个渠道；设置页可暂停自动监控或调整间隔。已完成动画可直接在表格预览，记录保存在本地数据库中。
+
+生成失败时会自动保存日志到用户数据目录的 `data/svg-failures/<记录ID>.log`，在失败记录的「说明」栏点击「下载完整失败日志」即可下载。三种协议共用此机制，记录实际请求正文、Token／推理参数、超时、耗时、HTTP 状态、安全响应头、完整异常堆栈及收到的原始 SSE／JSON／HTTP 错误正文，不再只保存一句错误提示。请求认证头不入日志，正文或异常回显的已知 API Key 会脱敏；日志随本地历史保留，不自动轮转删除。`response_body_complete` 表示是否读到响应 EOF；断流、超时或触及原有响应大小保护上限时会保留已收内容，并通过 `response_capture_end` 明确说明停止原因。此标记不代表模型生成完成，模型截断原因仍以原始响应为准。旧失败记录的原始响应无法补回；磁盘不可写时会明确提示日志保存失败。
+
+OpenAI Responses 流优先使用标准的 `output_text` 增量、`output_item.done` 和最终正文；部分中转站会把 SVG 放进 `reasoning_summary`，此时会检查增量、完成事件、最终对象及同步 JSON 中的摘要，仅在找到通过安全及动画校验的完整 SVG 才会接受。不同输出项、摘要段分别保留，避免后续摘要覆盖已收到的成品。若只有推理摘要且没有有效 SVG，会明确显示上游未提供可用正文，不把普通推理文字或占位符当成成品，也不误报为本地格式校验拒绝。
+
+在「中转站管理」的新增／编辑弹窗内设置渠道协议和推理等级。**渠道单独配置优先；选择「跟随系统默认」时，才使用设置页中对应协议组的默认等级**。Chat Completions 与 Responses 共用 OpenAI 默认值，Anthropic Messages 使用 Anthropic 默认值，两组默认均为 `xhigh`。修改系统默认值不会覆盖渠道的单独配置。旧渠道自动迁移为跟随系统默认。
+
+OpenAI Chat Completions 发送 `reasoning_effort`；OpenAI Responses 发送原生 `reasoning.effort`，并通过 `/v1/responses` 的 SSE 事件持续接收 `response.output_text.delta`；Anthropic Messages 发送自适应 `thinking` 和 `output_config.effort`，选择关闭思考则发送 `thinking.type: disabled`。OpenAI 支持 `none / minimal / low / medium / high / xhigh / max`，Anthropic 支持 `low / medium / high / xhigh / max`。三种协议都可选择「使用模型默认值」以省略推理参数，此选项与「跟随系统默认」不同。各模型与中转站的能力不同，请选择其支持的等级。题库评测、限流重试、SVG 生成与命令行入口均遵守相同优先级。
+
+设置 → 判定参数中的「API 请求超时（分钟）」默认 **15 分钟**，可设置为 1–1440 的整数。此项统一控制 OpenAI 和 Anthropic 渠道的 API 请求，覆盖题库评测、429 限流重测、命令行评测及动画生成；旧数据库会自动补入默认值。保存后对新启动的任务生效，已开始的任务沿用原配置。它限制单次 API 请求，包含自动重试的整轮评测可能更久。
+
+Token 额度在「设置 → 判定参数」统一调整：最大输出默认 **32K（32768）**，输入预算默认 **256K（262144）**，前端不再设 4096 的低上限。评测、限流重测、命令行评测和 SVG 生成共用输出设置，动画不再另行固定为 8192；响应接收和 SVG 解析容量随输出预算同步增大。旧版默认 512 会一次性升级为 32768，其他已自定义的额度保留。输入始终完整发送，输入预算用于记录模型容量约定，不做本地截断、不发送协议不支持的 `max_input_tokens` 字段；实际上下文窗口和输出上限由渠道模型决定。
+
+Responses 的 `max_output_tokens` 包含推理与最终正文，并非只限制可见的 SVG 字符。高推理等级下，即使 HTTP 200 且整个 SSE 已收到，上游仍可能因总额度耗尽而返回 `incomplete / length`；应同时核对 `usage.output_tokens`、`output_tokens_details.reasoning_tokens` 和最终正文，再按渠道支持能力调整输出预算。程序不擅自降低渠道推理等级，也不把截断的 SVG 补闭合后伪装成完整动画。
 
 ## 日常使用
 
@@ -228,6 +248,8 @@ relay-monitor/
 ├── build_desktop.py     # Windows EXE 打包脚本（PyInstaller）
 ├── make_package.py      # 源码分发包打包脚本
 ├── config.json          # 初始配置（首次运行导入 DB 后以界面配置为准）
+├── request_options.py  # 评测与动画生成共用的推理参数约定
+├── openai_responses_provider.cjs # OpenAI Responses SSE 评测适配器
 ├── default_aime_30.json # 全新安装默认题库（AIME 30 题）
 ├── requirements.txt     # Python 依赖
 ├── package.json         # Node 依赖（promptfoo）
@@ -247,7 +269,7 @@ A: 确认在项目目录执行过 `npm install promptfoo@0.115.0`，且 `node_mo
 A: 项目锁定的 0.115.0 只需 Node ≥ 18。若安装了最新版 promptfoo 需要 Node ≥ 22.22，请 `npm install promptfoo@0.115.0` 降级，或升级 Node。
 
 **Q: 评测全失败显示「认证失败(Key无效)」？**
-A: 检查 API Key 与 Base URL。OpenAI 兼容协议的地址通常以 `/v1` 结尾；Anthropic 原生协议不带。
+A: 检查 API Key 与 Base URL。OpenAI Chat Completions／Responses 的地址通常以 `/v1` 结尾；Anthropic Messages 兼容带或不带 `/v1`。
 
 **Q: 遇到 429 限流怎么办？**
 A: 系统自动处理：遇 429 立即降为并发 1，只重测失败的题，成功的题不会重复请求。日志会显示「检测到 N 题遭遇 429，立即降为并发 1」。

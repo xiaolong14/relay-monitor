@@ -55,6 +55,8 @@ def build():
         "--specpath", str(BASE / "build-desktop"),
         "--add-data", f"{BASE / 'static'}{separator}static",
         "--add-data", f"{BASE / 'config.json'}{separator}.",
+        "--add-data", f"{BASE / 'anthropic_provider.cjs'}{separator}.",
+        "--add-data", f"{BASE / 'openai_responses_provider.cjs'}{separator}.",
         "--add-data", f"{BASE / 'default_aime_30.json'}{separator}.",
         "--add-data", f"{BASE / 'node_modules'}{separator}node_modules",
         "--add-data", f"{BASE / 'node_runtime'}{separator}node_runtime",
