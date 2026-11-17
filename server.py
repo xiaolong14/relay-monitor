@@ -50,6 +50,12 @@ RUN_STATE = {"running": False, "started_at": None, "log": [], "paused": False}
 CONTROL = monitor.new_control()
 RUN_LOCK = threading.Lock()
 SVG_WORKER_COUNT = 3
+# 动画监控默认时段：08:00-12:00、14:00-21:00，只有落在时段内才会自动调用 API。
+SVG_TIME_WINDOW_DEFAULT = (
+    {"start": "08:00", "end": "12:00"},
+    {"start": "14:00", "end": "21:00"},
+)
+SVG_TIME_WINDOW_DEFAULT_JSON = json.dumps(list(SVG_TIME_WINDOW_DEFAULT), ensure_ascii=False)
 
 
 # ---------------- 通用工具 ----------------
@@ -86,6 +92,7 @@ def load_settings(con):
         "svg_monitor_enabled": "1",
         "svg_interval_minutes": "30",
         "svg_next_run_at": "",
+        "svg_time_windows": SVG_TIME_WINDOW_DEFAULT_JSON,
     }
     # 首次运行时用 config.json 的 settings 初始化缺省值
     rows = dict(con.execute("SELECT key, value FROM settings").fetchall())
@@ -119,6 +126,7 @@ def load_settings(con):
         "svg_monitor_enabled": merged["svg_monitor_enabled"] == "1",
         "svg_interval_minutes": max(1, min(1440, int(merged["svg_interval_minutes"]))),
         "svg_next_run_at": merged["svg_next_run_at"],
+        "svg_time_windows": load_svg_time_windows(merged["svg_time_windows"]),
         "last_auto_date": merged.get("last_auto_date", ""),
     }
 
@@ -131,6 +139,80 @@ def save_setting(con, key, value):
         (key, str(value)),
     )
     con.commit()
+
+
+def normalize_svg_time_windows(items):
+    """校验并规范化动画监控时间段，支持跨零点时段；非法输入抛出 ValueError。"""
+    if not isinstance(items, (list, tuple)) or not items:
+        raise ValueError("请至少添加一个动画监控时间段")
+    normalized, seen = [], set()
+    for item in items:
+        if isinstance(item, dict):
+            start = str(item.get("start", "")).strip()
+            end = str(item.get("end", "")).strip()
+        elif isinstance(item, str) and "-" in item:
+            start, end = (part.strip() for part in item.split("-", 1))
+        else:
+            raise ValueError("时间段格式应为 HH:MM-HH:MM")
+        try:
+            start_text = datetime.datetime.strptime(start, "%H:%M").strftime("%H:%M")
+            end_text = datetime.datetime.strptime(end, "%H:%M").strftime("%H:%M")
+        except ValueError:
+            raise ValueError("时间段格式应为 HH:MM-HH:MM") from None
+        if start_text == end_text:
+            raise ValueError("时间段的开始和结束时间不能相同")
+        if (start_text, end_text) in seen:
+            continue
+        seen.add((start_text, end_text))
+        normalized.append({"start": start_text, "end": end_text})
+    normalized.sort(key=lambda window: window["start"])
+    return normalized
+
+
+def load_svg_time_windows(raw):
+    """解析已保存的时间段 JSON；内容异常时回退默认时段，避免自动监控被中断。"""
+    try:
+        return normalize_svg_time_windows(json.loads(raw) if raw else [])
+    except (TypeError, ValueError):
+        return [dict(window) for window in SVG_TIME_WINDOW_DEFAULT]
+
+
+def svg_window_range(now, window):
+    """返回指定日期上的时段起止时间点；结束时间早于开始时间视为跨零点。"""
+    start = datetime.datetime.combine(now.date(), datetime.time.fromisoformat(window["start"]))
+    end = datetime.datetime.combine(now.date(), datetime.time.fromisoformat(window["end"]))
+    if end <= start:
+        end += datetime.timedelta(days=1)
+    return start, end
+
+
+def in_svg_time_window(now, windows):
+    """判断当前时间是否处于任一监控时段内，兼容跨零点时段延续到次日凌晨。"""
+    for window in windows:
+        for offset in (0, -1):
+            start, end = svg_window_range(now + datetime.timedelta(days=offset), window)
+            if start <= now < end:
+                return True
+    return False
+
+
+def next_svg_window_start(now, windows):
+    """返回当前时间之后最近的时段开始时间；无可用时段时返回 None。"""
+    candidates = []
+    for window in windows:
+        for offset in (0, 1):
+            start, _ = svg_window_range(now + datetime.timedelta(days=offset), window)
+            if start > now:
+                candidates.append(start)
+    return min(candidates) if candidates else None
+
+
+def plan_next_svg_run(now, windows, interval_minutes):
+    """规划下一次自动生成时间：时段内按间隔推进，落在时段外则顺延到下一个时段开始。"""
+    candidate = now + datetime.timedelta(minutes=max(1, int(interval_minutes)))
+    if in_svg_time_window(candidate, windows):
+        return candidate
+    return next_svg_window_start(candidate, windows) or candidate
 
 
 SVG_STATE = {
@@ -429,7 +511,7 @@ def list_svg_generations(limit=50):
     ).fetchall()
     settings = dict(con.execute(
         "SELECT key, value FROM settings WHERE key IN "
-        "('svg_monitor_enabled','svg_interval_minutes','svg_next_run_at')"
+        "('svg_monitor_enabled','svg_interval_minutes','svg_next_run_at','svg_time_windows')"
     ).fetchall())
     con.close()
     items = [{
@@ -441,9 +523,12 @@ def list_svg_generations(limit=50):
     } for row in rows]
     with SVG_STATE_LOCK:
         state = dict(SVG_STATE)
+    windows = load_svg_time_windows(settings.get("svg_time_windows"))
     state["next_run_at"] = settings.get("svg_next_run_at", "")
     state["enabled"] = settings.get("svg_monitor_enabled", "1") == "1"
     state["interval_minutes"] = max(1, min(1440, int(settings.get("svg_interval_minutes", "30"))))
+    state["time_windows"] = windows
+    state["in_time_window"] = in_svg_time_window(datetime.datetime.now(), windows)
     return {"items": items, "state": state}
 
 
@@ -605,8 +690,9 @@ def scheduler_loop():
                     con.close()
                     worker(print)
                     continue
-            # SVG 监控按间隔运行；第一次启动先安排到 30 分钟后，避免服务启动即产生外部请求。
+            # SVG 监控按间隔运行；只在设定的监控时段内发起请求，时段外顺延到下一个时段开始。
             if s["svg_monitor_enabled"]:
+                windows = s["svg_time_windows"]
                 next_run = None
                 if s["svg_next_run_at"]:
                     try:
@@ -614,14 +700,15 @@ def scheduler_loop():
                     except ValueError:
                         next_run = None
                 if next_run is None:
-                    next_run = now + datetime.timedelta(minutes=s["svg_interval_minutes"])
+                    next_run = plan_next_svg_run(now, windows, s["svg_interval_minutes"])
                     save_setting(con, "svg_next_run_at", next_run.isoformat(timespec="seconds"))
                 elif now >= next_run:
-                    result = start_svg_generation(trigger="scheduled")
-                    next_run = now + datetime.timedelta(minutes=s["svg_interval_minutes"])
+                    if in_svg_time_window(now, windows):
+                        result = start_svg_generation(trigger="scheduled")
+                        if not result.get("ok") and result.get("code") != "running":
+                            print(f"[svg] 自动监控未创建任务：{result['msg']}")
+                    next_run = plan_next_svg_run(now, windows, s["svg_interval_minutes"])
                     save_setting(con, "svg_next_run_at", next_run.isoformat(timespec="seconds"))
-                    if not result.get("ok") and result.get("code") != "running":
-                        print(f"[svg] 自动监控未创建任务：{result['msg']}")
             con.close()
         except Exception as e:  # 定时器守护线程不允许退出
             print(f"[scheduler] {e}")
@@ -710,6 +797,8 @@ class SettingsIn(BaseModel):
     station_parallel: int = 10
     svg_monitor_enabled: bool | None = None
     svg_interval_minutes: int | None = None
+    # 自动生成时段，如 [{"start": "08:00", "end": "12:00"}]；为空/缺省表示不修改。
+    svg_time_windows: list[dict[str, str]] | list[str] | None = None
 
 
 class QuestionIn(BaseModel):
@@ -1013,9 +1102,18 @@ def update_settings(body: SettingsIn):
         save_setting(con, "svg_monitor_enabled", 1 if body.svg_monitor_enabled else 0)
     if body.svg_interval_minutes is not None:
         save_setting(con, "svg_interval_minutes", max(1, min(body.svg_interval_minutes, 1440)))
-        # 修改周期后从当前时间重新计算下一次自动生成，避免沿用旧周期。
-        next_run = datetime.datetime.now() + datetime.timedelta(
-            minutes=max(1, min(body.svg_interval_minutes, 1440))
+    if body.svg_time_windows is not None:
+        try:
+            windows = normalize_svg_time_windows(body.svg_time_windows)
+        except ValueError as exc:
+            con.close()
+            raise HTTPException(400, str(exc))
+        save_setting(con, "svg_time_windows", json.dumps(windows, ensure_ascii=False))
+    # 周期或时段变更后，立即按新配置重算下一次自动生成时间。
+    if body.svg_interval_minutes is not None or body.svg_time_windows is not None:
+        current = load_settings(con)
+        next_run = plan_next_svg_run(
+            datetime.datetime.now(), current["svg_time_windows"], current["svg_interval_minutes"]
         )
         save_setting(con, "svg_next_run_at", next_run.isoformat(timespec="seconds"))
     # 修改时间后允许当天重新触发（清空防重复标记）
@@ -1271,6 +1369,10 @@ def get_report(date_str: str):
 
 # ---------------- 静态页面 ----------------
 
+# 管理界面的静态资源（背景底图、Logo 等），挂载在 /static 下供 index.html 引用。
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
 @app.get("/")
 def index():
     """返回管理界面首页。"""
@@ -1287,8 +1389,8 @@ def on_startup():
     con = get_con()
     settings = load_settings(con)
     if settings["svg_monitor_enabled"] and not settings["svg_next_run_at"]:
-        next_run = datetime.datetime.now() + datetime.timedelta(
-            minutes=settings["svg_interval_minutes"]
+        next_run = plan_next_svg_run(
+            datetime.datetime.now(), settings["svg_time_windows"], settings["svg_interval_minutes"]
         )
         save_setting(con, "svg_next_run_at", next_run.isoformat(timespec="seconds"))
     con.close()
