@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """SVG 动画协议适配与净化测试。"""
 
+import http.client
 import io
 import json
 import unittest
@@ -56,6 +57,16 @@ class FakeStreamResponse:
         line = self.payload[self.offset:end]
         self.offset = end
         return line
+
+
+class InterruptedStreamResponse(FakeStreamResponse):
+    """模拟上游在 SSE 流结束前断开连接（缺少终止事件和结束块）。"""
+
+    def readline(self, size=-1):
+        line = super().readline(size)
+        if line:
+            return line
+        raise http.client.IncompleteRead(b"")
 
 
 class SVGArtworkTests(unittest.TestCase):
@@ -120,9 +131,14 @@ class SVGArtworkTests(unittest.TestCase):
         self.assertNotIn("https://", cleaned)
         self.assertIn('viewBox="0 0 800 420"', cleaned)
 
-    def test_static_svg_is_rejected(self):
-        with self.assertRaisesRegex(svg_artwork.SVGGenerationError, "没有可播放动画"):
-            svg_artwork.sanitize_svg('<svg><circle r="2"/></svg>')
+    def test_static_svg_is_accepted(self):
+        """提示词要求静态画面，不含动画标签的 SVG 也应正常通过净化。"""
+        cleaned = svg_artwork.sanitize_svg(
+            '<svg xmlns="http://www.w3.org/2000/svg"><circle r="2" fill="#ff8800"/></svg>'
+        )
+        self.assertIn("<circle", cleaned)
+        self.assertNotIn("<script", cleaned)
+        self.assertIn('viewBox="0 0 800 420"', cleaned)
 
     def test_openai_compatible_request(self):
         captured = {}
@@ -130,6 +146,7 @@ class SVGArtworkTests(unittest.TestCase):
         def fake_urlopen(request, timeout):
             captured["url"] = request.full_url
             captured["authorization"] = request.get_header("Authorization")
+            captured["accept"] = request.get_header("Accept")
             captured["body"] = json.loads(request.data)
             captured["timeout"] = timeout
             return FakeResponse({"choices": [{"message": {"content": SAFE_ANIMATED_SVG}}]})
@@ -143,6 +160,9 @@ class SVGArtworkTests(unittest.TestCase):
         self.assertEqual(captured["url"], "https://relay.invalid/v1/chat/completions")
         self.assertEqual(captured["authorization"], "Bearer test-key")
         self.assertEqual(captured["timeout"], 900)
+        self.assertTrue(captured["body"]["stream"])
+        self.assertEqual(captured["body"]["stream_options"], {"include_usage": True})
+        self.assertEqual(captured["accept"], "text/event-stream, application/json")
         self.assertEqual(captured["body"]["reasoning_effort"], "xhigh")
         self.assertEqual(captured["body"]["max_completion_tokens"], 32768)
         self.assertNotIn("max_tokens", captured["body"])
@@ -252,6 +272,30 @@ class SVGArtworkTests(unittest.TestCase):
         }, urlopen=lambda *_args, **_kwargs: FakeStreamResponse(stream))
 
         self.assertIn("<animateTransform", result)
+
+    def test_openai_responses_accepts_complete_svg_after_connection_drop(self):
+        """上游发完完整 SVG 但未发送终止事件就断开时，仍应接受已收到的成品。"""
+        stream = f"data: {json.dumps({'type': 'response.output_text.delta', 'delta': SAFE_ANIMATED_SVG})}\n\n"
+
+        result = svg_artwork.generate_svg({
+            "protocol": "openai-responses", "baseUrl": "https://relay.invalid/v1",
+            "apiKey": "test-key", "model": "test-model",
+        }, urlopen=lambda *_args, **_kwargs: InterruptedStreamResponse(stream))
+
+        self.assertIn("<animateTransform", result)
+
+    def test_openai_responses_reports_upstream_disconnect_for_truncated_svg(self):
+        """上游断流且正文不完整时，错误需说明断流，而不是服务内部错误。"""
+        stream = f"data: {json.dumps({'type': 'response.output_text.delta', 'delta': SAFE_ANIMATED_SVG[:-8]})}\n\n"
+
+        with self.assertRaises(svg_artwork.SVGGenerationError) as ctx:
+            svg_artwork.generate_svg({
+                "protocol": "openai-responses", "baseUrl": "https://relay.invalid/v1",
+                "apiKey": "test-key", "model": "test-model",
+            }, urlopen=lambda *_args, **_kwargs: InterruptedStreamResponse(stream))
+
+        self.assertIn("上游流式响应在生成完成前断开", str(ctx.exception))
+        self.assertNotIn("内部错误", str(ctx.exception))
 
     def test_openai_responses_uses_final_response_when_delta_is_truncated(self):
         events = [

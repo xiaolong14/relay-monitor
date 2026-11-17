@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""通过已配置的 AI 中转站生成并净化可播放的 SVG 动画。"""
+"""通过已配置的 AI 中转站生成并净化可安全预览的 SVG 画面。"""
 
 import json
 import http.client
@@ -106,7 +106,7 @@ class _ResponseCapture:
         return chunk
 
     def readline(self, size=-1):
-        if not hasattr(self.response, "read1"):
+        if not hasattr(self.response, "read1") and hasattr(self.response, "readline"):
             return self._read("readline", size)
         # 按网络可用字节先取证再分行；直接调用 HTTPResponse.readline 会在
         # 一行中途超时时丢掉内部缓冲中尚未返回的半行内容。
@@ -120,7 +120,8 @@ class _ResponseCapture:
                 del self.line_buffer[:end]
                 return line
             chunk_size = 64 * 1024 if size < 0 else min(64 * 1024, size - len(self.line_buffer))
-            chunk = self._read("read1", chunk_size)
+            method = "read1" if hasattr(self.response, "read1") else "read"
+            chunk = self._read(method, chunk_size)
             if chunk:
                 self.line_buffer.extend(chunk)
 
@@ -302,7 +303,11 @@ def _incomplete_error(reason, stream=False, validation_error=None, diagnostics=N
         message += f"；输出校验失败：{validation_error}"
     if diagnostics:
         message += f"；诊断：{diagnostics}"
-    return SVGGenerationError(message)
+    metadata = {"upstream_incomplete_reason": reason}
+    if reason in {"max_output_tokens", "max_tokens", "length", "content_filter"}:
+        # 同一预算、同一请求立即重跑不能修复额度耗尽或内容拦截。
+        metadata["retryable"] = False
+    return SVGGenerationError(message, response_metadata=metadata)
 
 
 def _responses_output_text(payload):
@@ -338,6 +343,28 @@ def _responses_reasoning_summary(payload):
     return "\n".join(parts)
 
 
+def _openai_error(payload, *, stream=False, api_name="OpenAI Responses"):
+    """统一读取标准顶层 error 事件、嵌套错误及 response.failed 的错误码。"""
+    response = payload.get("response") or {}
+    error = payload.get("error") or response.get("error") or payload
+    code = error.get("code") if isinstance(error, dict) else None
+    # 错误消息可能回显敏感信息，页面仅展示格式受限的错误码和本地说明。
+    code = code if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", code) else None
+    transient_codes = {
+        "stream_timeout", "request_timeout", "timeout", "server_error", "internal_error",
+        "rate_limit_exceeded", "overloaded", "overloaded_error",
+    }
+    metadata = {"upstream_error_code": code}
+    if code in transient_codes:
+        metadata["retryable"] = True
+    prefix = f"{api_name} 流返回错误" if stream else f"{api_name} 返回错误"
+    if code == "stream_timeout":
+        message = "上游网关等待响应流超时（stream_timeout），未取得完整结果"
+    else:
+        message = f"{prefix}{f'（{code}）' if code else ''}"
+    return SVGGenerationError(message, response_metadata=metadata)
+
+
 def _text_from_response(payload, protocol, allow_incomplete=False):
     """读取 OpenAI 兼容或 Anthropic 消息文本，屏蔽未知响应结构。"""
     if protocol == "anthropic":
@@ -348,16 +375,14 @@ def _text_from_response(payload, protocol, allow_incomplete=False):
             if isinstance(block, dict) and block.get("type") == "text"
         )
     elif protocol == "openai-responses":
-        error = payload.get("error")
-        if error:
-            code = error.get("code") if isinstance(error, dict) else None
-            raise SVGGenerationError(
-                f"OpenAI Responses 返回错误{f'（{code}）' if code else ''}"
-            )
+        if payload.get("error") or payload.get("type") == "error":
+            raise _openai_error(payload)
         incomplete = payload.get("incomplete_details") or {}
         stop_reason = incomplete.get("reason") if payload.get("status") == "incomplete" else None
         text = _responses_output_text(payload)
     else:
+        if payload.get("error") or payload.get("type") == "error":
+            raise _openai_error(payload, api_name="OpenAI Chat Completions")
         choices = payload.get("choices", [])
         stop_reason = choices[0].get("finish_reason") if choices else None
         message = choices[0].get("message", {}) if choices else {}
@@ -372,13 +397,120 @@ def _text_from_response(payload, protocol, allow_incomplete=False):
     # 区分渠道截断与格式不符，不记录响应正文或渠道密钥。
     if stop_reason in {"length", "max_tokens", "max_output_tokens"} and not allow_incomplete:
         logger.warning("SVG 生成被渠道截断：协议=%s，结束原因=%s", protocol, stop_reason)
-        raise SVGGenerationError("模型输出达到长度上限，动画未完整生成；请提高设置中的最大输出 Token，或检查渠道模型上限")
+        raise SVGGenerationError(
+            "模型输出达到长度上限，动画未完整生成；请提高设置中的最大输出 Token，或检查渠道模型上限",
+            response_metadata={"retryable": False, "upstream_finish_reason": stop_reason},
+        )
+    if stop_reason == "content_filter":
+        raise SVGGenerationError("模型输出被内容过滤拦截", response_metadata={"retryable": False})
     if (protocol == "openai-responses" and payload.get("status") == "incomplete"
             and not allow_incomplete):
         raise _incomplete_error(stop_reason)
     if not isinstance(text, str) or not text.strip():
         raise SVGGenerationError("模型没有返回 SVG 内容")
     return text.strip()
+
+
+def _read_openai_chat(response, max_response_bytes, max_chars):
+    """逐事件接收 Chat Completions；只拼接首个候选的可见正文，不混入推理。"""
+    event_lines = []
+    raw_parts = []
+    text_parts = []
+    text_chars = 0
+    received = 0
+    saw_sse = False
+    done = False
+    finish_reason = None
+    parse_error = None
+    read_error = None
+
+    def process_event(lines):
+        nonlocal text_chars, finish_reason, done
+        data = "\n".join(line[5:].lstrip(" ") for line in lines if line.startswith("data:"))
+        if not data:
+            return
+        if data == "[DONE]":
+            done = True
+            return
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise SVGGenerationError("OpenAI Chat Completions 流包含无效 JSON 事件") from exc
+        if payload.get("error") or payload.get("type") == "error":
+            raise _openai_error(payload, stream=True, api_name="OpenAI Chat Completions")
+        choice = next((item for item in payload.get("choices", []) if item.get("index", 0) == 0), None)
+        if choice is None:
+            return  # 最后独立的 usage 块可没有 choices。
+        content = (choice.get("delta") or {}).get("content")
+        if isinstance(content, list):
+            content = "".join(part.get("text", "") for part in content
+                              if isinstance(part, dict) and part.get("type") == "text"
+                              and isinstance(part.get("text"), str))
+        if isinstance(content, str):
+            text_parts.append(content)
+            text_chars += len(content)
+            if text_chars > max_chars:
+                raise SVGGenerationError("SVG 内容过大，请重试")
+        if choice.get("finish_reason") is not None:
+            finish_reason = choice["finish_reason"]
+
+    while True:
+        try:
+            raw_line = response.readline(max_response_bytes - received + 1)
+        except (ConnectionError, http.client.HTTPException) as exc:
+            read_error = exc
+            break
+        if not raw_line:
+            break
+        received += len(raw_line)
+        if received > max_response_bytes:
+            response.stop_reason = "达到本地响应大小保护上限"
+            raise SVGGenerationError("渠道响应超过大小限制")
+        if parse_error is not None:
+            continue  # 保留解析失败后的完整诊断响应，与 Responses 取证行为一致。
+        try:
+            line = raw_line.decode("utf-8").rstrip("\r\n")
+            if line.startswith(("event:", "data:", ":")):
+                saw_sse = True
+                raw_parts.clear()
+            if not saw_sse:
+                raw_parts.append(raw_line)
+            if not line:
+                if saw_sse:
+                    process_event(event_lines)
+                event_lines = []
+                if done:
+                    response.stop_reason = "已收到 Chat Completions [DONE] 结束标记"
+                    break
+            else:
+                event_lines.append(line)
+        except UnicodeDecodeError as exc:
+            parse_error = SVGGenerationError("渠道响应格式无效")
+            parse_error.__cause__ = exc
+        except Exception as exc:
+            parse_error = exc
+    if parse_error is not None:
+        raise parse_error
+    if read_error is None and event_lines and saw_sse:
+        process_event(event_lines)
+    if not saw_sse:
+        if read_error is not None:
+            raise read_error
+        try:
+            payload = json.loads(b"".join(raw_parts).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SVGGenerationError("渠道响应格式无效") from exc
+        logger.warning("OpenAI Chat Completions 渠道忽略流式请求，返回了同步 JSON")
+        return sanitize_svg(_text_from_response(payload, "openai"), max_chars=max_chars)
+    logger.info("OpenAI Chat Completions 流结束：结束原因=%s，DONE=%s，接收字节=%s，正文字符=%s",
+                finish_reason, done, received, text_chars)
+    if read_error is not None or (not done and finish_reason is None):
+        raise SVGGenerationError(
+            f"上游 Chat Completions 流在生成完成前断开（已接收 {received} 字节，正文 {text_chars} 字符），请重试",
+            response_metadata={"retryable": True},
+        ) from read_error
+    payload = {"choices": [{"finish_reason": finish_reason, "message": {"content": "".join(text_parts)}}]}
+    return sanitize_svg(_text_from_response(payload, "openai"), max_chars=max_chars)
 
 
 def _read_openai_responses(response, max_response_bytes, max_chars):
@@ -394,10 +526,11 @@ def _read_openai_responses(response, max_response_bytes, max_chars):
     received = 0
     saw_sse = False
     final_event_type = ""
+    done_marker = False
     parse_error = None
 
     def process_event(lines):
-        nonlocal final_response, final_event_type, text_chars
+        nonlocal final_response, final_event_type, text_chars, done_marker
         if not lines:
             return
         event_name = ""
@@ -408,7 +541,10 @@ def _read_openai_responses(response, max_response_bytes, max_chars):
             elif line.startswith("data:"):
                 data_lines.append(line[5:].lstrip(" "))
         data = "\n".join(data_lines)
-        if not data or data == "[DONE]":
+        if not data:
+            return
+        if data == "[DONE]":
+            done_marker = True
             return
         try:
             payload = json.loads(data)
@@ -448,18 +584,28 @@ def _read_openai_responses(response, max_response_bytes, max_chars):
             item = payload.get("item")
             if isinstance(item, dict):
                 done_items[payload.get("output_index", 0)] = item
-        elif event_type in {"response.completed", "response.incomplete"}:
-            final_response = payload.get("response") or payload
+        elif event_type in {"response.completed", "response.done", "response.incomplete"}:
+            final_response = dict(payload.get("response") or payload)
+            final_response.setdefault("status", "incomplete" if event_type == "response.incomplete" else "completed")
             final_event_type = event_type
+        elif event_type in {"response.cancelled", "response.canceled"}:
+            final_event_type = event_type
+            raise SVGGenerationError("OpenAI Responses 请求已被上游取消",
+                                     response_metadata={"retryable": False})
         elif event_type in {"response.failed", "error"}:
-            error = payload.get("error") or (payload.get("response") or {}).get("error") or {}
-            code = error.get("code") if isinstance(error, dict) else None
-            raise SVGGenerationError(
-                f"OpenAI Responses 流返回错误{f'（{code}）' if code else ''}"
-            )
+            final_event_type = event_type
+            raise _openai_error(payload, stream=True)
 
+    read_error = None
     while True:
-        raw_line = response.readline(max_response_bytes - received + 1)
+        try:
+            raw_line = response.readline(max_response_bytes - received + 1)
+        except (ConnectionError, http.client.HTTPException) as exc:
+            # 网关超时等原因会让上游在流未结束时断开；此时不能把已收到的
+            # SSE 正文全部作废，先停止读取，再用已累积的增量做完整性校验。
+            # 读取超时（TimeoutError）不在此收敛，仍按请求超时单独上报。
+            read_error = exc
+            break
         if not raw_line:
             break
         received += len(raw_line)
@@ -487,11 +633,18 @@ def _read_openai_responses(response, max_response_bytes, max_chars):
                     # 解析已失败仍接收剩余正文，避免丢掉上游随后返回的诊断事件。
                     parse_error = exc
             event_lines = []
+            if final_event_type or done_marker:
+                # 与 sub2api 一致，以完整的终止事件结束接收；避免等待连接关闭造成假超时。
+                # 错误事件也立即保留原始错误码，不能被后续读取超时覆盖。
+                response.stop_reason = f"已收到 Responses {final_event_type or '[DONE]'} 结束事件"
+                break
         else:
             event_lines.append(line)
     if parse_error is not None:
         raise parse_error
-    if event_lines and saw_sse:
+    # 连接异常中断时，最后一组 event_lines 可能只收到半条事件，直接丢弃；
+    # 已完整接收的事件早已在循环内处理。
+    if read_error is None and event_lines and saw_sse:
         process_event(event_lines)
 
     if not saw_sse:
@@ -501,7 +654,7 @@ def _read_openai_responses(response, max_response_bytes, max_chars):
             raise SVGGenerationError("渠道响应格式无效") from exc
         status = payload.get("status")
         incomplete = (payload.get("incomplete_details") or {}).get("reason")
-        if payload.get("error"):
+        if payload.get("error") or payload.get("type") == "error":
             # 沿用同步协议的显式错误处理，不能用摘要掩盖上游错误。
             _text_from_response(payload, "openai-responses", allow_incomplete=True)
         text = _responses_output_text(payload)
@@ -532,7 +685,7 @@ def _read_openai_responses(response, max_response_bytes, max_chars):
     )
     if final_response:
         if final_response.get("error"):
-            raise SVGGenerationError("OpenAI Responses 流返回错误")
+            raise _openai_error(final_response, stream=True)
     final_text = _responses_output_text(final_response)
     candidates = []
     if final_text:
@@ -555,16 +708,26 @@ def _read_openai_responses(response, max_response_bytes, max_chars):
     # 同一摘要会在 delta、done 和最终对象中重复出现，诊断长度不重复累计。
     reasoning_summary_chars = max(map(len, summary_sources), default=0)
     summary_text = "\n".join(dict.fromkeys(text for text in summary_sources if text))
-    return _validate_responses_candidates(
-        candidates, max_chars, status, incomplete, stream=True,
-        received=received, event_type=final_event_type,
-        output_tokens=((final_response.get("usage") or {}).get("output_tokens")
-                       if final_response else None),
-        reasoning_tokens=(((((final_response.get("usage") or {}).get("output_tokens_details") or {})
-                            .get("reasoning_tokens")) if final_response else None)),
-        reasoning_summary_chars=reasoning_summary_chars,
-        reasoning_summary_candidate=summary_text,
-    )
+    try:
+        return _validate_responses_candidates(
+            candidates, max_chars, status, incomplete, stream=True,
+            received=received, event_type=final_event_type,
+            output_tokens=((final_response.get("usage") or {}).get("output_tokens")
+                           if final_response else None),
+            reasoning_tokens=(((((final_response.get("usage") or {}).get("output_tokens_details") or {})
+                                .get("reasoning_tokens")) if final_response else None)),
+            reasoning_summary_chars=reasoning_summary_chars,
+            reasoning_summary_candidate=summary_text,
+        )
+    except SVGGenerationError as exc:
+        if read_error is not None:
+            # 候选文本未通过校验且连接是被异常中断的：明确说明断流原因，
+            # 避免用户误以为是本地解析失败或服务内部错误。
+            raise SVGGenerationError(
+                f"上游流式响应在生成完成前断开（已接收 {received} 字节，"
+                f"增量正文 {text_chars} 字符，未收到终止事件），请重试"
+            ) from read_error
+        raise
 
 
 def _validate_responses_candidates(candidates, max_chars, status, reason, *,
@@ -715,8 +878,8 @@ def sanitize_svg(text, max_chars=MAX_SVG_CHARS):
     if removed_tags or removed_attributes:
         logger.warning("SVG 安全净化移除内容：元素=%s，属性=%s",
                        dict(removed_tags), dict(removed_attributes))
-    if not any(local_name(node.tag) in ANIMATION_TAGS for node in root.iter()):
-        raise SVGGenerationError("生成结果没有可播放动画，请重试")
+    # 提示词要求输出静态画面，允许不含 SMIL 动画的 SVG；
+    # 动画标签仍会保留，兼容历史上生成的动画作品。
     # 保留模型画布坐标，仅让根画布自适应预览；子图形的尺寸必须保留。
     view_box = root.get("viewBox", "0 0 800 420")
     parts = re.split(r"[\s,]+", view_box.strip())
@@ -772,11 +935,21 @@ def generate_svg(relay, urlopen=None, reasoning_effort=DEFAULT_REASONING_EFFORT,
                 ))
             finally:
                 exc.close()
-            error = SVGGenerationError(f"渠道 API 返回 HTTP {exc.code}")
+            error = SVGGenerationError(
+                f"渠道 API 返回 HTTP {exc.code}",
+                response_metadata={"retryable": exc.code in {408, 429} or 500 <= exc.code < 600},
+            )
         elif isinstance(exc, TimeoutError) or (
                 isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, TimeoutError)):
             error = SVGGenerationError(
                 f"渠道 API 请求超时（已配置 {timeout_seconds // 60} 分钟），请稍后重试"
+            )
+        elif isinstance(exc, (http.client.IncompleteRead, http.client.RemoteDisconnected,
+                              ConnectionError)):
+            # 上游网关提前断开流式响应（HTTP 状态可能仍是 200），按断流提示，
+            # 不能笼统归为服务内部错误。
+            error = SVGGenerationError(
+                "渠道 API 连接中断，流式响应未完整接收（已接收内容见失败日志），请重试"
             )
         elif isinstance(exc, urllib.error.URLError):
             error = SVGGenerationError("无法连接渠道 API，请检查地址和网络")
@@ -905,6 +1078,9 @@ def _generate_svg_request(relay, diagnostic, urlopen, reasoning_effort,
             "input": USER_PROMPT,
             "max_output_tokens": max_tokens,
             "stream": True,
+            # 请求加密推理项以兼容渠道的 Responses 输出；该字段不是心跳，
+            # 不能防止网关的流超时，也不保证推理期间持续产生增量事件。
+            "include": ["reasoning.encrypted_content"],
             **responses_params(model, reasoning_effort),
         }
         headers = {
@@ -917,6 +1093,8 @@ def _generate_svg_request(relay, diagnostic, urlopen, reasoning_effort,
         body = {
             "model": model,
             params["max_tokens_field"]: max_tokens,
+            "stream": True,
+            "stream_options": {"include_usage": True},
             **({"temperature": params["temperature"]} if params["temperature"] is not None else {}),
             **({"reasoning_effort": params["reasoning_effort"]} if params["reasoning_effort"] else {}),
             "messages": [
@@ -925,13 +1103,14 @@ def _generate_svg_request(relay, diagnostic, urlopen, reasoning_effort,
         }
         headers = {
             "Content-Type": "application/json",
+            "Accept": "text/event-stream, application/json",
             "Authorization": f"Bearer {api_key}",
         }
 
     # 输入预算是模型容量约定；这两个协议没有通用的 max_input_tokens 请求字段。
     # 完整发送原始输入，不按字符估算 Token 后截断，也不伪造渠道不支持的参数。
-    logger.info("渠道 API Token 预算：协议=%s，输出=%s，输入=%s（完整发送输入）",
-                protocol, max_tokens, max_input_tokens)
+    logger.info("渠道 API Token 预算：协议=%s，输出=%s，输入=%s，流式=%s（完整发送输入）",
+                protocol, max_tokens, max_input_tokens, body.get("stream", False))
     # 只保存实际请求正文和不含认证参数的地址，不把请求头写入日志。
     diagnostic["metadata"].update({
         "endpoint": _safe_endpoint(endpoint),
@@ -955,6 +1134,8 @@ def _generate_svg_request(relay, diagnostic, urlopen, reasoning_effort,
         if protocol == "openai-responses":
             # Responses 读取阶段已经完成 SVG 完整性、安全性和动画校验。
             return _read_openai_responses(capture, max_response_bytes, max_svg_chars)
+        if protocol != "anthropic":
+            return _read_openai_chat(capture, max_response_bytes, max_svg_chars)
         raw = capture.read_body(max_response_bytes)
         if len(raw) > max_response_bytes:
             raise SVGGenerationError("渠道响应超过大小限制")

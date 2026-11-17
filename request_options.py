@@ -262,13 +262,15 @@ def degrade_request_body(protocol, body, error_text):
 
     optional_fields = {
         "anthropic": ("temperature", "thinking", "output_config"),
-        "openai-responses": ("temperature", "reasoning", "max_output_tokens"),
-        "openai": ("temperature", "reasoning_effort"),
+        "openai-responses": ("temperature", "reasoning", "max_output_tokens", "include"),
+        "openai": ("stream_options", "temperature", "reasoning_effort"),
     }.get(protocol, ("temperature",))
 
     for field in optional_fields:
         if field in result and field in text:
             drop(field)
+    if protocol == "openai" and "include_usage" in text:
+        drop("stream_options")
 
     if protocol == "openai":
         current = ("max_completion_tokens" if "max_completion_tokens" in result

@@ -31,7 +31,7 @@ Relay Monitor 把这三件事打包成一个可以长期挂着跑的 Web 系统�
 - **掺水判定**：当日分数跌破滑动基线阈值 → 疑似掺水；回升 → 已恢复；每天自动生成 HTML 日报与推荐站点
 - **站点并行 + 站内并发**：多个中转站同时测试（上限 10），每站内部并发独立配置（默认 5）
 - **智能 429 处理**：遇限流立即降为并发 1，**只重测失败的题**，已成功的题不会重复请求
-- **三种 API 协议**：支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages；Responses 使用 SSE 流式接收，长输出无需等待完整响应才开始传输
+- **三种 API 协议**：支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages；两种 OpenAI 协议均使用 SSE 流式接收，长输出无需等待完整响应才开始传输
 - **渠道推理等级**：两种 OpenAI 协议与 Anthropic Messages 均可单独配置推理等级；未单独配置时继承对应协议的系统默认值（默认 `xhigh`），题库评测、429 重测和 SVG 动画生成使用同一渠道配置
 - **精准错误剔除**：仅超时/限流/网络失败等「模型未作答」的真错误剔除出分母；答错的题正常计 0 分（判分严格，不会虚高）
 - **一天多次评测**：每次记录独立保留，日视图显示加权平均分，可展开查看每次明细
@@ -191,11 +191,17 @@ OpenAI Responses 流优先使用标准的 `output_text` 增量、`output_item.do
 
 OpenAI Chat Completions 发送 `reasoning_effort`；OpenAI Responses 发送原生 `reasoning.effort`，并通过 `/v1/responses` 的 SSE 事件持续接收 `response.output_text.delta`；Anthropic Messages 发送自适应 `thinking` 和 `output_config.effort`，选择关闭思考则发送 `thinking.type: disabled`。OpenAI 支持 `none / minimal / low / medium / high / xhigh / max`，Anthropic 支持 `low / medium / high / xhigh / max`。三种协议都可选择「使用模型默认值」以省略推理参数，此选项与「跟随系统默认」不同。各模型与中转站的能力不同，请选择其支持的等级。题库评测、限流重试、SVG 生成与命令行入口均遵守相同优先级。
 
+Chat Completions 在题库评测、限流重测和 SVG 生成中统一发送 `stream: true`，逐段读取 `choices[0].delta.content`，并检查 `finish_reason` 和 `[DONE]`，不把推理字段当作输出正文。请求同时携带 `stream_options.include_usage`；渠道明确不支持该可选字段时仅移除用量选项，仍保持流式。若渠道忽略流式参数而返回完整 JSON，会记录告警并兼容读取，不额外发起同步请求。流中断、长度截断和错误事件按失败处理，SVG 失败日志保留收到的原始 SSE。
+
+Responses 在题库评测和 SVG 生成中也固定发送 `stream: true`。收到 `response.completed`、兼容事件 `response.done` 或 `response.incomplete` 后立即按最终状态处理，不等待 `[DONE]` 或连接关闭；上游失败、取消事件及时报错，避免后续读取超时覆盖原始原因。题库评测缺少终止事件时不将部分答案送去判分；SVG 保留已有的完整性与安全校验规则。主动停止接收时，失败日志记录对应的结束事件，不把未读到 HTTP EOF 的响应标为完整正文。
+
 设置 → 判定参数中的「API 请求超时（分钟）」默认 **15 分钟**，可设置为 1–1440 的整数。此项统一控制 OpenAI 和 Anthropic 渠道的 API 请求，覆盖题库评测、429 限流重测、命令行评测及动画生成；旧数据库会自动补入默认值。保存后对新启动的任务生效，已开始的任务沿用原配置。它限制单次 API 请求，包含自动重试的整轮评测可能更久。
 
 Token 额度在「设置 → 判定参数」统一调整：最大输出默认 **32K（32768）**，输入预算默认 **256K（262144）**，前端不再设 4096 的低上限。评测、限流重测、命令行评测和 SVG 生成共用输出设置，动画不再另行固定为 8192；响应接收和 SVG 解析容量随输出预算同步增大。旧版默认 512 会一次性升级为 32768，其他已自定义的额度保留。输入始终完整发送，输入预算用于记录模型容量约定，不做本地截断、不发送协议不支持的 `max_input_tokens` 字段；实际上下文窗口和输出上限由渠道模型决定。
 
 Responses 的 `max_output_tokens` 包含推理与最终正文，并非只限制可见的 SVG 字符。高推理等级下，即使 HTTP 200 且整个 SSE 已收到，上游仍可能因总额度耗尽而返回 `incomplete / length`；应同时核对 `usage.output_tokens`、`output_tokens_details.reasoning_tokens` 和最终正文，再按渠道支持能力调整输出预算。程序不擅自降低渠道推理等级，也不把截断的 SVG 补闭合后伪装成完整动画。
+
+SVG 生成按上游错误码判断是否自动重试：Responses 顶层 `error`、嵌套 `error` 和 `response.failed` 共用错误解析，网关 `stream_timeout`、临时服务错误及限流沿用最多一次的自动重试，并保留首次失败日志。输出额度耗尽或内容拦截不再原样重跑；认证和参数错误仍直接报错。`reasoning.encrypted_content` 用于返回加密推理项，并不是心跳，不能保证规避渠道网关超时。本地超时设置也无法延长上游主动关闭连接的期限。
 
 ## 日常使用
 

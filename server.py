@@ -157,7 +157,7 @@ def _svg_row_status(con, generation_id, status, **values):
     """更新单条 SVG 记录，并保留每个状态节点的时间。"""
     fields = ["status=?"]
     params = [status]
-    for key in ("started_at", "completed_at", "svg_content", "error_detail"):
+    for key in ("started_at", "completed_at", "svg_content", "error_detail", "attempts"):
         if key in values:
             fields.append(f"{key}=?")
             params.append(values[key])
@@ -190,8 +190,38 @@ def _record_svg_worker_failure(generation_id, relay, exc):
     ))
 
 
+# 上游临时故障（断流、超时、5xx、模型偶发空输出）值得自动重试一次；
+# 鉴权、地址、参数、内容校验类问题重试无意义，直接失败并保留证据。
+SVG_RETRYABLE_MARKERS = ("断开", "中断", "超时", "HTTP 5", "内部错误", "未完整生成", "没有可播放动画")
+# 用 "HTTP 4" 而不是裸数字，避免断流提示里的“已接收 400 字节”被误判成客户端错误。
+SVG_NON_RETRYABLE_MARKERS = ("无法连接渠道 API", "HTTP 4", "内容过大", "格式无效", "画布无法读取")
+
+
+def _is_retryable_svg_failure(error):
+    """判断 SVG 生成失败原因是否属于上游临时故障，只有这类问题才自动重试。"""
+    metadata = getattr(error, "response_metadata", {}) or {}
+    if isinstance(metadata.get("retryable"), bool):
+        return metadata["retryable"]
+    text = str(error or "")
+    if any(marker in text for marker in SVG_NON_RETRYABLE_MARKERS):
+        return False
+    return any(marker in text for marker in SVG_RETRYABLE_MARKERS)
+
+
+def _archive_first_svg_failure_log(generation_id):
+    """自动重试会覆盖同一路径的失败日志，先把首次现场归档为 attempt1 便于取证。"""
+    log_path = _svg_failure_log_path(generation_id)
+    if not log_path.is_file():
+        return
+    archive = log_path.with_name(f"{generation_id}-attempt1{log_path.suffix}")
+    try:
+        log_path.replace(archive)
+    except OSError as exc:
+        print(f"[svg] 记录 #{generation_id} 首次失败日志归档失败：{type(exc).__name__}")
+
+
 def _run_one_svg_generation(generation_id, relay):
-    """执行一个渠道的 SVG 生成，单渠道失败不影响其他渠道。"""
+    """执行一个渠道的 SVG 生成；上游临时断流时自动重试一次，单渠道失败不影响其他渠道。"""
     started = datetime.datetime.now().isoformat(timespec="seconds")
     con = get_con()
     _svg_row_status(con, generation_id, "generating", started_at=started, error_detail=None)
@@ -204,54 +234,71 @@ def _run_one_svg_generation(generation_id, relay):
     ).fetchone()
     con.close()
     _svg_state_update(current_id=generation_id)
-    try:
-        print(f"[svg] 渠道 {relay['label']} {protocol} 请求推理等级：{reasoning_effort}")
-        print(f"[svg] 渠道 {relay['label']} API 请求超时：{api_timeout_minutes} 分钟")
-        print(f"[svg] Token 预算：输出 {settings['max_tokens']}，输入 {settings['max_input_tokens']}（完整发送输入）")
-        svg = svg_artwork.generate_svg(
-            relay, reasoning_effort=reasoning_effort, api_timeout_minutes=api_timeout_minutes,
-            max_tokens=settings["max_tokens"], max_input_tokens=settings["max_input_tokens"],
-            failure_log_path=_svg_failure_log_path(generation_id),
-            failure_log_metadata={
-                "generation_id": generation_id, "relay": relay["name"],
-                "relay_label": relay["label"], "started_at": started,
-                "trigger": request_info[0], "requested_at": request_info[1],
-            },
-        )
-    except svg_artwork.SVGGenerationError as exc:
-        message = str(exc)
-        con = get_con()
-        _svg_row_status(
-            con, generation_id, "failed",
-            completed_at=datetime.datetime.now().isoformat(timespec="seconds"),
-            error_detail=message,
-        )
-        con.close()
-        print(f"[svg] 渠道 {relay['label']} 生成失败：{message}")
-        return False
-    except Exception as exc:
-        # 未知异常不向前端返回原始内容，避免意外泄露请求头、地址或密钥。
-        message = _record_svg_worker_failure(generation_id, relay, exc)
-        con = get_con()
-        _svg_row_status(
-            con, generation_id, "failed",
-            completed_at=datetime.datetime.now().isoformat(timespec="seconds"),
-            error_detail=message,
-        )
-        con.close()
-        print(f"[svg] 渠道 {relay['label']} 发生内部异常：{type(exc).__name__}")
-        return False
+    print(f"[svg] 渠道 {relay['label']} {protocol} 请求推理等级：{reasoning_effort}")
+    print(f"[svg] 渠道 {relay['label']} API 请求超时：{api_timeout_minutes} 分钟")
+    print(f"[svg] Token 预算：输出 {settings['max_tokens']}，输入 {settings['max_input_tokens']}（完整发送输入）")
 
-    con = get_con()
-    _svg_row_status(
-        con, generation_id, "completed",
-        completed_at=datetime.datetime.now().isoformat(timespec="seconds"),
-        svg_content=svg,
-        error_detail=None,
-    )
-    con.close()
-    print(f"[svg] 渠道 {relay['label']} 生成完成：记录 #{generation_id}")
-    return True
+    attempt = 0
+    max_attempts = 2
+    while True:
+        attempt += 1
+        if attempt > 1:
+            _archive_first_svg_failure_log(generation_id)
+            # 重试次数落库，前端据此展示「重试 N 次」徽标与真实总耗时。
+            con = get_con()
+            _svg_row_status(con, generation_id, "generating", attempts=attempt)
+            con.close()
+            print(f"[svg] 渠道 {relay['label']} 自动重试第 {attempt} 次")
+        try:
+            svg = svg_artwork.generate_svg(
+                relay, reasoning_effort=reasoning_effort, api_timeout_minutes=api_timeout_minutes,
+                max_tokens=settings["max_tokens"], max_input_tokens=settings["max_input_tokens"],
+                failure_log_path=_svg_failure_log_path(generation_id),
+                failure_log_metadata={
+                    "generation_id": generation_id, "relay": relay["name"],
+                    "relay_label": relay["label"], "started_at": started,
+                    "trigger": request_info[0], "requested_at": request_info[1],
+                    "attempt": attempt,
+                },
+            )
+        except svg_artwork.SVGGenerationError as exc:
+            message = str(exc)
+            if attempt < max_attempts and _is_retryable_svg_failure(exc):
+                print(f"[svg] 渠道 {relay['label']} 第 {attempt} 次尝试失败，准备自动重试：{message}")
+                continue
+            con = get_con()
+            _svg_row_status(
+                con, generation_id, "failed",
+                completed_at=datetime.datetime.now().isoformat(timespec="seconds"),
+                error_detail=message, attempts=attempt,
+            )
+            con.close()
+            print(f"[svg] 渠道 {relay['label']} 生成失败（共尝试 {attempt} 次）：{message}")
+            return False
+        except Exception as exc:
+            # 未知异常不向前端返回原始内容，避免意外泄露请求头、地址或密钥。
+            message = _record_svg_worker_failure(generation_id, relay, exc)
+            con = get_con()
+            _svg_row_status(
+                con, generation_id, "failed",
+                completed_at=datetime.datetime.now().isoformat(timespec="seconds"),
+                error_detail=message,
+            )
+            con.close()
+            print(f"[svg] 渠道 {relay['label']} 发生内部异常：{type(exc).__name__}")
+            return False
+
+        con = get_con()
+        _svg_row_status(
+            con, generation_id, "completed",
+            completed_at=datetime.datetime.now().isoformat(timespec="seconds"),
+            svg_content=svg,
+            error_detail=None, attempts=attempt,
+        )
+        con.close()
+        suffix = f"（第 {attempt} 次尝试）" if attempt > 1 else ""
+        print(f"[svg] 渠道 {relay['label']} 生成完成{suffix}：记录 #{generation_id}")
+        return True
 
 
 def _svg_generation_worker(items):
@@ -377,7 +424,7 @@ def list_svg_generations(limit=50):
     con = sqlite3.connect(monitor.DB_PATH, timeout=10)
     rows = con.execute(
         """SELECT id, relay, relay_label, model_id, status, trigger, error_detail,
-                  requested_at, started_at, completed_at
+                  requested_at, started_at, completed_at, attempts
            FROM svg_generations ORDER BY id DESC LIMIT ?""", (limit,)
     ).fetchall()
     settings = dict(con.execute(
@@ -389,7 +436,7 @@ def list_svg_generations(limit=50):
         "id": row[0], "relay": row[1], "relay_label": row[2] or row[1],
         "model_id": row[3] or "未记录", "status": row[4], "trigger": row[5],
         "error_detail": row[6], "requested_at": row[7], "started_at": row[8],
-        "completed_at": row[9],
+        "completed_at": row[9], "attempts": row[10] or 1,
         "failure_log_available": row[4] == "failed" and _svg_failure_log_path(row[0]).is_file(),
     } for row in rows]
     with SVG_STATE_LOCK:
@@ -409,6 +456,21 @@ def recover_svg_generations():
            SET status='failed', error_detail='服务重启时生成中断', completed_at=?
            WHERE status='generating'""", (now,)
     )
+    # 兼容补全：早期已自动重试但未记录次数的失败记录，依据 attempt1 归档日志还原为 2 次尝试。
+    archive_dir = monitor.DATA_DIR / "svg-failures"
+    if archive_dir.is_dir():
+        repaired = [
+            row[0] for row in con.execute(
+                "SELECT id FROM svg_generations WHERE attempts=1 AND status IN ('completed','failed')"
+            ).fetchall()
+            if (archive_dir / f"{row[0]}-attempt1.log").is_file()
+        ]
+        if repaired:
+            con.executemany(
+                "UPDATE svg_generations SET attempts=2 WHERE id=?",
+                [(generation_id,) for generation_id in repaired],
+            )
+            print(f"[svg] 数据补全：已为 {len(repaired)} 条历史记录标记自动重试")
     con.commit()
     relays = {r["name"]: r for r in monitor.load_relays(con)}
     queued = con.execute(

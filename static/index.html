@@ -150,6 +150,10 @@ dialog h2{font-size:24px;letter-spacing:-.7px}
 @media(max-width:900px){header{padding:0 16px;gap:10px;overflow-x:auto}header h1{display:none}nav button{padding:0 10px}main{padding:0 13px 50px}.hero{padding:50px 8px 30px}.hero h2{letter-spacing:-1.8px}.hero p{font-size:16px}.metrics{grid-template-columns:1fr 1fr}.settings-layout{grid-template-columns:1fr}.card{padding:20px}.chart-shell{height:310px}}
 @media(max-width:560px){header{position:fixed;top:auto;bottom:0;width:100%;height:64px;padding:0 8px;justify-content:center;overflow:visible;border-top:1px solid var(--line);border-bottom:0}header nav{flex:1;justify-content:space-around}nav button{display:flex;min-width:55px;height:58px;padding:7px 4px 4px;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:9px}nav button.active:after{display:none}nav button.active{color:var(--blue)}nav .lucide{width:18px;height:18px;margin:0}.header-actions{margin-left:0!important}.header-actions .btn-primary,.theme-toggle{width:42px;height:42px;padding:0;font-size:0;box-shadow:0 7px 18px rgba(0,113,227,.28)}.header-actions .btn .lucide{width:17px;height:17px}.theme-toggle .theme-label{display:none}main{padding-bottom:88px}.metrics{grid-template-columns:1fr}.metric{min-height:116px}.form2{grid-template-columns:1fr}.toolbar{align-items:stretch}.toolbar select{width:100%!important}.section-head{flex-direction:column}.hero{padding-top:44px}.hero h2{font-size:38px}.card{border-radius:20px;padding:17px}.chart-shell{height:280px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+.svg-elapsed{white-space:nowrap;font-variant-numeric:tabular-nums;font-family:var(--font-type)}
+.svg-elapsed.is-live{color:var(--gold)}
+.svg-retry{display:inline-flex;align-items:center;gap:4px;margin:0 0 4px;padding:1px 6px;border-radius:3px;background:var(--code-bg);color:var(--gold);font-size:10px;font-weight:600;white-space:nowrap}
+.svg-retry .lucide{width:11px;height:11px}
 </style>
 </head>
 <body>
@@ -641,6 +645,39 @@ function formatSvgTime(value){
   return String(value).replace('T',' ');
 }
 
+/** 解析后端保存的本地时间戳，手动拆分避免浏览器对空格分隔格式的兼容差异。 */
+function parseSvgTimestamp(value){
+  if(!value) return null;
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if(!match) return null;
+  const date = new Date(+match[1], +match[2] - 1, +match[3], +match[4], +match[5], +(match[6] || 0));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** 将起止时间格式化为「X分YY秒」，用于展示单条动画的真实生成耗时。 */
+function formatElapsed(beginAt, endAt){
+  const begin = parseSvgTimestamp(beginAt);
+  if(!begin) return '—';
+  const end = endAt ? parseSvgTimestamp(endAt) : new Date();
+  if(!end) return '—';
+  const total = Math.max(0, Math.round((end - begin) / 1000));
+  const pad = value => String(value).padStart(2, '0');
+  if(total < 60) return `${total}秒`;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if(minutes < 60) return `${minutes}分${pad(seconds)}秒`;
+  return `${Math.floor(minutes / 60)}时${pad(minutes % 60)}分${pad(seconds)}秒`;
+}
+
+/** 每秒刷新生成中记录的耗时；轮询间隔 2 秒，独立计时让秒数连续跳动。 */
+function updateSvgElapsed(){
+  document.querySelectorAll('[data-svg-elapsed]').forEach(node => {
+    if(node.dataset.end || !node.dataset.begin) return;
+    const text = formatElapsed(node.dataset.begin, '');
+    if(node.textContent !== text) node.textContent = text;
+  });
+}
+
 /** 对表格中的渠道配置和模型响应文本做 HTML 转义。 */
 function escapeHtml(value){
   return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -770,7 +807,7 @@ async function loadSvgGenerations(){
   const rows = data.items || [];
   const table = $('svgGenerationTable');
   if(!table.tHead || !table.tBodies.length){
-    table.innerHTML = '<thead><tr><th>动画预览</th><th>生成渠道</th><th>模型</th><th>状态</th><th>触发方式</th><th>请求时间</th><th>完成时间</th><th>说明</th></tr></thead><tbody></tbody>';
+    table.innerHTML = '<thead><tr><th>动画预览</th><th>生成渠道</th><th>模型</th><th>状态</th><th>触发方式</th><th>请求时间</th><th>完成时间</th><th>耗时</th><th>说明</th></tr></thead><tbody></tbody>';
   }
   const body = table.tBodies[0];
   const nextSignatures = new Map();
@@ -779,7 +816,7 @@ async function loadSvgGenerations(){
     .map(node => [node.dataset.svgGenerationId, node]));
   if(!rows.length){
     if(!body.querySelector('[data-svg-empty]')){
-      body.innerHTML = '<tr data-svg-empty="true"><td colspan="8" class="muted">暂无生成记录，点击「立即生成动画」开始。</td></tr>';
+      body.innerHTML = '<tr data-svg-empty="true"><td colspan="9" class="muted">暂无生成记录，点击「立即生成动画」开始。</td></tr>';
     }
   } else {
     if(body.querySelector('[data-svg-empty]')){
@@ -800,18 +837,33 @@ async function loadSvgGenerations(){
     const preview = row.status === 'completed'
       ? `<div class="svg-preview-trigger" role="button" tabindex="0" data-svg-preview-id="${id}" data-svg-preview-title="${escapeHtml(`${row.relay_label} · ${row.model_id}`)}" data-svg-preview-time="${escapeHtml(formatSvgTime(row.completed_at))}" aria-label="点击放大播放 ${relayLabel} 生成的鹈鹕骑车动画"><iframe class="svg-preview" src="/api/svg-generations/${id}/preview" title="${relayLabel} 生成的鹈鹕骑车动画" sandbox loading="lazy"></iframe><span class="svg-preview-hint">点击放大播放</span></div>`
       : `<div class="svg-preview-empty"><i data-lucide="${icon}" class="${row.status==='generating'?'spin':''}"></i>${label}</div>`;
+    const attempts = Math.max(1, Number(row.attempts) || 1);
+    const retryCount = attempts - 1;
+    const retryHint = row.status === 'failed'
+      ? `上游临时故障，自动重试 ${retryCount} 次仍未成功`
+      : (row.status === 'completed'
+          ? `上游临时故障，自动重试 ${retryCount} 次后成功`
+          : `上游临时故障，正在第 ${attempts} 次重试，耗时持续累计`);
+    const retryLabel = row.status === 'failed'
+      ? `自动重试 ${retryCount} 次仍失败`
+      : (row.status === 'completed' ? `自动重试 ${retryCount} 次后成功` : `重试中 · 第 ${attempts} 次`);
+    const retryBadge = retryCount > 0
+      ? `<div class="svg-retry" title="${escapeHtml(retryHint)}"><i data-lucide="refresh-cw"></i>${escapeHtml(retryLabel)}</div>`
+      : '';
+    const beginAt = row.started_at || (row.status === 'queued' ? '' : row.requested_at);
+    const elapsed = `<span class="svg-elapsed${row.status === 'generating' ? ' is-live' : ''}" data-svg-elapsed data-begin="${escapeHtml(beginAt)}" data-end="${escapeHtml(row.completed_at || '')}">${escapeHtml(formatElapsed(beginAt, row.completed_at))}</span>`;
     const note = row.status === 'failed'
-      ? `<span class="svg-error">${escapeHtml(row.error_detail || '渠道没有返回可用 SVG')}</span><div class="muted">${row.failure_log_available
+      ? `${retryBadge}<span class="svg-error">${escapeHtml(row.error_detail || '渠道没有返回可用 SVG')}</span><div class="muted">${row.failure_log_available
           ? `<a href="/api/svg-generations/${id}/failure-log">下载完整失败日志</a>`
           : '该记录未保留原始日志'}</div>`
-      : (row.status === 'completed' ? '动画可播放' : '等待渠道返回动画');
+      : `${retryBadge}<div>${row.status === 'completed' ? '动画可播放' : '等待渠道返回动画'}</div>`;
     const triggerLabel = row.trigger === 'scheduled' ? '自动监控'
       : (row.trigger === 'validation' ? '开发验证' : '手动生成');
     const html = `<tr data-svg-generation-id="${id}"><td>${preview}</td><td><b>${relayLabel}</b><div class="muted">${relayName}</div></td>
       <td><span class="model-chip" title="${model}">${model}</span></td>
       <td><span class="svg-state ${css}"><i data-lucide="${icon}" class="${row.status==='generating'?'spin':''}"></i>${label}</span></td>
       <td>${triggerLabel}</td><td>${escapeHtml(formatSvgTime(row.requested_at))}</td>
-      <td>${escapeHtml(formatSvgTime(row.completed_at))}</td><td>${note}</td></tr>`;
+      <td>${escapeHtml(formatSvgTime(row.completed_at))}</td><td>${elapsed}</td><td>${note}</td></tr>`;
     const holder = document.createElement('tbody');
     holder.innerHTML = html;
     const replacement = holder.firstElementChild;
@@ -914,6 +966,9 @@ $('svgPreviewDlg').addEventListener('close', () => {
   if(lastSvgPreviewTrigger?.isConnected) lastSvgPreviewTrigger.focus();
   lastSvgPreviewTrigger = null;
 });
+
+// 生成中记录的耗时由独立计时器每秒刷新，不受 2 秒轮询间隔影响。
+setInterval(updateSvgElapsed, 1000);
 
 /** 新窗口打开当日 HTML 日报 */
 function openReport(){

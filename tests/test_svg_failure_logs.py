@@ -66,13 +66,16 @@ class FailureLogTests(unittest.TestCase):
                + "data: [DONE]\r\n\r\n").encode("utf-8")
         details, body = self.generate_failure(Response(raw))
         self.assertEqual(body, raw)
-        self.assertTrue(details["response_body_complete"])
+        # 终止事件后主动停止，不能把尚未读到 HTTP EOF 的取证标为完整正文。
+        self.assertFalse(details["response_body_complete"])
+        self.assertIn("response.incomplete", details["response_capture_end"])
         self.assertEqual(details["captured_response_bytes"], len(raw))
         self.assertEqual(details["request_body"]["input"], svg_artwork.USER_PROMPT)
         self.assertTrue(details["request_body"]["stream"])
         self.assertEqual(details["response_headers"]["x-request-id"], "upstream-request-123")
         self.assertIn("_validate_responses_candidates", details["traceback"])
         self.assertIn("输出校验失败：SVG 根标签未闭合", details["error"])
+        self.assertFalse(details["retryable"])
         self.assertEqual(details["generation_id"], 123)
         self.assertGreaterEqual(details["elapsed_seconds"], 0)
         self.assertNotIn(RELAY["apiKey"].encode(), self.path.read_bytes())
@@ -98,6 +101,36 @@ class FailureLogTests(unittest.TestCase):
         self.assertEqual(body, raw)
         self.assertTrue(details["response_body_complete"])
         self.assertIn("JSONDecodeError", details["traceback"])
+
+    def test_responses_error_shapes_keep_code_and_retry_classification(self):
+        """标准顶层错误和代理嵌套错误必须进入同一个取证、重试机制。"""
+        for event in (
+            {"type": "error", "code": "stream_timeout", "message": "Upstream response stream timed out"},
+            {"type": "error", "error": {"code": "stream_timeout"}},
+            {"type": "response.failed", "response": {"error": {"code": "stream_timeout"}}},
+        ):
+            with self.subTest(event=event):
+                raw = f"data: {json.dumps(event)}\n\n".encode()
+                details, body = self.generate_failure(Response(raw))
+                self.assertEqual(body, raw)
+                self.assertEqual(details["upstream_error_code"], "stream_timeout")
+                self.assertTrue(details["retryable"])
+                self.assertIn("上游网关等待响应流超时", details["error"])
+        raw = b'{"type":"error","code":"rate_limit_exceeded"}'
+        details, _ = self.generate_failure(Response(raw))
+        self.assertTrue(details["retryable"])
+        self.assertEqual(details["upstream_error_code"], "rate_limit_exceeded")
+        self.assertTrue(server._is_retryable_svg_failure(svg_artwork.SVGGenerationError(
+            details["error"], response_metadata=details,
+        )))
+
+    def test_authentication_error_is_not_retried(self):
+        raw = b'data: {"type":"error","code":"invalid_api_key","message":"retry timeout"}\n\n'
+        details, _ = self.generate_failure(Response(raw))
+        self.assertEqual(details["upstream_error_code"], "invalid_api_key")
+        self.assertFalse(server._is_retryable_svg_failure(svg_artwork.SVGGenerationError(
+            details["error"], response_metadata=details,
+        )))
 
     def test_reasoning_summary_only_is_reported_without_claiming_svg_rejection(self):
         summary = "模型计划绘图，并提到占位符 <svg ...> ... </svg>，随后继续规划。"
@@ -203,6 +236,15 @@ class FailureLogTests(unittest.TestCase):
         self.assertNotIn(RELAY["apiKey"].encode(), self.path.read_bytes())
         self.assertIn("HTTPError", details["traceback"])
 
+    def test_http_retry_classification_uses_status_instead_of_message(self):
+        for status, expected in ((401, False), (404, False), (408, True), (429, True), (503, True)):
+            with self.subTest(status=status):
+                def fail(*_args, **_kwargs):
+                    raise urllib.error.HTTPError(RELAY["baseUrl"], status, "failed", {}, io.BytesIO(b"error"))
+                with self.assertRaises(svg_artwork.SVGGenerationError) as caught:
+                    svg_artwork.generate_svg(RELAY, urlopen=fail, failure_log_path=self.path)
+                self.assertEqual(server._is_retryable_svg_failure(caught.exception), expected)
+
     def test_size_limit_is_explicitly_recorded_as_partial(self):
         limit = svg_artwork.SVG_CHARS_PER_TOKEN * 6 + 64 * 1024
         raw = b"x" * (limit + 100)
@@ -252,7 +294,8 @@ class FailureLogAPITests(unittest.TestCase):
             con.execute("""CREATE TABLE svg_generations(
                 id INTEGER PRIMARY KEY, relay TEXT, relay_label TEXT, model_id TEXT,
                 status TEXT, trigger TEXT, error_detail TEXT, requested_at TEXT,
-                started_at TEXT, completed_at TEXT, svg_content TEXT)""")
+                started_at TEXT, completed_at TEXT, svg_content TEXT,
+                attempts INTEGER NOT NULL DEFAULT 1)""")
             con.execute("CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT)")
             con.executemany(
                 "INSERT INTO svg_generations(id,relay,status,trigger) VALUES(?,'test',?,'manual')",
@@ -276,6 +319,7 @@ class FailureLogAPITests(unittest.TestCase):
         self.assertTrue(rows[1]["failure_log_available"])
         self.assertFalse(rows[2]["failure_log_available"])
         self.assertFalse(rows[3]["failure_log_available"])
+        self.assertEqual(rows[1]["attempts"], 1)
         download = self.client.get("/api/svg-generations/1/failure-log")
         self.assertEqual(download.status_code, 200)
         self.assertEqual(download.content, server._svg_failure_log_path(1).read_bytes())
@@ -291,6 +335,35 @@ class FailureLogAPITests(unittest.TestCase):
                     f"/api/svg-generations/{generation_id}/failure-log",
                 ).status_code, status)
         self.assertEqual(self.client.get("/api/svg-generations/not-an-id/failure-log").status_code, 422)
+
+    def test_worker_retries_top_level_stream_timeout_and_keeps_first_evidence(self):
+        settings = {"reasoning_effort": "xhigh", "api_timeout_minutes": 15,
+                    "max_tokens": 65536, "max_input_tokens": 262144}
+        svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>'
+        failed = b'data: {"type":"error","code":"stream_timeout"}\n\n'
+        completed = ("data: " + json.dumps({"type": "response.completed", "response": {
+            "status": "completed", "output_text": svg,
+        }}) + "\n\n").encode()
+        requests = []
+
+        def open_response(request, **_options):
+            requests.append(json.loads(request.data))
+            return Response(failed if len(requests) == 1 else completed)
+
+        with patch.object(server, "get_con", side_effect=lambda: sqlite3.connect(self.db)), \
+                patch.object(server, "load_settings", return_value=settings), \
+                patch.object(server, "_svg_state_update"), \
+                patch.object(svg_artwork.urllib.request, "urlopen", side_effect=open_response):
+            self.assertTrue(server._run_one_svg_generation(1, {**RELAY, "model": "gpt-6.1-sol"}))
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0], requests[1])
+        self.assertEqual(requests[0]["reasoning"]["effort"], "xhigh")
+        with closing(sqlite3.connect(self.db)) as con:
+            self.assertEqual(con.execute(
+                "SELECT status,attempts,error_detail FROM svg_generations WHERE id=1",
+            ).fetchone(), ("completed", 2, None))
+        archive = server._svg_failure_log_path(1).with_name("1-attempt1.log")
+        self.assertTrue(archive.read_bytes().endswith(failed))
 
     def test_worker_fallback_keeps_original_internal_exception(self):
         try:

@@ -39,7 +39,11 @@ function parseEvent(block, state) {
     .filter((line) => line.startsWith('data:'))
     .map((line) => line.slice(5).replace(/^ /, ''))
     .join('\n');
-  if (!data || data === '[DONE]') return;
+  if (!data) return;
+  if (data === '[DONE]') {
+    state.done = true;
+    return;
+  }
 
   let payload;
   try {
@@ -52,11 +56,18 @@ function parseEvent(block, state) {
     state.output += payload.delta;
   } else if (type === 'response.output_text.done' && !state.output && typeof payload.text === 'string') {
     state.output = payload.text;
-  } else if (type === 'response.completed' || type === 'response.incomplete') {
-    state.response = payload.response || payload;
+  } else if (['response.completed', 'response.done', 'response.incomplete'].includes(type)) {
+    state.terminal = type;
+    state.response = {...(payload.response || payload)};
+    state.response.status ||= type === 'response.incomplete' ? 'incomplete' : 'completed';
+  } else if (type === 'response.cancelled' || type === 'response.canceled') {
+    throw new Error('OpenAI Responses 请求已被上游取消');
   } else if (type === 'response.failed' || type === 'error') {
-    const error = payload.error || payload.response?.error || {};
-    throw new Error(`OpenAI Responses 流返回错误${error.code ? `（${error.code}）` : ''}`);
+    // 标准 error 事件的 code 在顶层；response.failed 则嵌套在 response.error。
+    const error = payload.error || payload.response?.error || payload;
+    const code = typeof error.code === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(error.code)
+      ? error.code : null;
+    throw new Error(`OpenAI Responses 流返回错误${code ? `（${code}）` : ''}`);
   }
 }
 
@@ -64,13 +75,13 @@ async function readEventStream(body, maxBytes) {
   if (!body) throw new Error('OpenAI Responses 流没有响应体');
   const reader = body.getReader();
   const decoder = new TextDecoder();
-  const state = {output: '', response: null};
+  const state = {output: '', response: null, terminal: '', done: false};
   let buffer = '';
   let received = 0;
   let ended = false;
 
   try {
-    while (true) {
+    while (!state.terminal && !state.done) {
       const {done, value} = await reader.read();
       if (done) {
         ended = true;
@@ -81,14 +92,21 @@ async function readEventStream(body, maxBytes) {
       buffer += decoder.decode(value, {stream: true});
       const blocks = buffer.split(/\r?\n\r?\n/);
       buffer = blocks.pop() || '';
-      for (const block of blocks) parseEvent(block, state);
+      for (const block of blocks) {
+        parseEvent(block, state);
+        // Responses 的终止事件包含最终状态和 usage，不必再等 [DONE] 或 HTTP EOF。
+        if (state.terminal || state.done) break;
+      }
     }
   } finally {
     if (!ended) await reader.cancel().catch(() => {});
   }
-  buffer += decoder.decode();
-  if (buffer.trim()) parseEvent(buffer, state);
+  if (!state.terminal && !state.done) {
+    buffer += decoder.decode();
+    if (buffer.trim()) parseEvent(buffer, state);
+  }
 
+  if (!state.terminal) throw new Error('OpenAI Responses 流在生成完成前断开：未收到终止事件');
   const incomplete = incompleteError(state.response);
   if (incomplete) throw new Error(incomplete);
   if (!state.output) state.output = extractResponseText(state.response);
@@ -146,7 +164,7 @@ module.exports = class OpenAIResponsesStreamProvider {
       model,
       input: prompt,
       max_output_tokens: maxOutputTokens,
-      stream: this.config.stream !== false,
+      stream: true,
       ...(this.config.reasoning_effort
         ? {reasoning: {effort: this.config.reasoning_effort}}
         : {}),

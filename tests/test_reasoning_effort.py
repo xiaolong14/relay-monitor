@@ -252,6 +252,31 @@ global.fetch = async (url, options) => {
         self.assertEqual(data["result"]["output"], "答案")
         self.assertEqual(data["result"]["tokenUsage"], {"prompt": 3, "completion": 2, "total": 5})
 
+    @unittest.skipUnless(shutil.which("node"), "需要 Node 验证 Responses 标准错误事件")
+    def test_openai_responses_provider_keeps_top_level_error_code(self):
+        script = r"""
+const Provider = require('./openai_responses_provider.cjs');
+global.fetch = async () => new Response(
+  'data: {"type":"error","code":"stream_timeout","message":"upstream detail"}\n\n',
+  {headers: {'content-type': 'text/event-stream'}},
+);
+(async () => {
+  const provider = new Provider({config: {
+    apiBaseUrl: 'https://relay.invalid/v1', apiKey: 'test-key', model: 'test-model',
+    max_output_tokens: 2048, requestTimeoutMs: 5000,
+  }});
+  process.stdout.write(JSON.stringify(await provider.callApi('测试')));
+})();
+"""
+        result = subprocess.run(
+            [shutil.which("node"), "-e", script], capture_output=True, text=True,
+            encoding="utf-8", cwd=monitor.BASE_DIR, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        error = json.loads(result.stdout)["error"]
+        self.assertIn("stream_timeout", error)
+        self.assertNotIn("upstream detail", error)
+
     def test_anthropic_yaml_omits_openai_parameters(self):
         for effort in get_args(AnthropicReasoningEffort):
             config = monitor.gen_provider_yaml(
@@ -284,6 +309,7 @@ global.fetch = async (url, options) => {
             with self.subTest(model=model):
                 config = monitor.gen_provider_yaml({**RELAY, "model": model}, QUESTIONS, 512, "xhigh")
                 self.assertIn(field, config)
+                self.assertIn("stream: true", config)
                 self.assertIn(extra, config)
                 self.assertNotIn("passthrough", config)
                 if model == "gpt-4o":
@@ -344,6 +370,8 @@ const cases = JSON.parse(fs.readFileSync(0, 'utf8'));
             model, effort = case["model"], case["effort"]
             with self.subTest(model=model, effort=effort):
                 self.assertEqual(body["model"], model)
+                self.assertTrue(body["stream"])
+                self.assertEqual(body["stream_options"], {"include_usage": True})
                 self.assertNotIn("max_output_tokens", body)
                 if model == "gpt-4o":
                     self.assertEqual(body["max_tokens"], 512)

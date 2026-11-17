@@ -1,4 +1,4 @@
-// OpenAI Chat Completions 适配器：请求体只包含 Python 侧确认可用的字段，
+// OpenAI Chat Completions 流式适配器：逐段解析 SSE，保留结束原因与 Token 用量，
 // 遇到上游 400/422 时按错误信息自动去掉或替换不兼容参数，避免整题因格式被拒。
 
 /**
@@ -37,6 +37,8 @@ function buildBody(config, prompt) {
   const body = {
     model: config.model,
     messages: [{role: 'user', content: prompt}],
+    stream: true,
+    stream_options: {include_usage: true},
   };
   const tokens = Number(config.max_tokens);
   if (Number.isSafeInteger(tokens) && tokens > 0) {
@@ -65,9 +67,10 @@ function degradeBody(body, errorText) {
       changed = true;
     }
   };
-  for (const field of ['temperature', 'reasoning_effort']) {
+  for (const field of ['stream_options', 'temperature', 'reasoning_effort']) {
     if (field in next && text.includes(field)) drop(field);
   }
+  if (text.includes('include_usage')) drop('stream_options');
   const limit = 'max_completion_tokens' in next
     ? 'max_completion_tokens' : ('max_tokens' in next ? 'max_tokens' : null);
   const alternate = limit === 'max_completion_tokens' ? 'max_tokens' : 'max_completion_tokens';
@@ -81,7 +84,7 @@ function degradeBody(body, errorText) {
     changed = true;
   }
   if (!changed && /unsupported|unknown|not allowed|unrecognized|extra/.test(text)) {
-    for (const field of ['temperature', 'reasoning_effort']) {
+    for (const field of ['temperature', 'reasoning_effort', 'stream_options']) {
       if (field in next) {
         drop(field);
         break;
@@ -118,6 +121,86 @@ function tokenUsage(data) {
   const prompt = Number(usage.prompt_tokens) || 0;
   const completion = Number(usage.completion_tokens) || 0;
   return {prompt, completion, total: Number(usage.total_tokens) || prompt + completion};
+}
+
+/** 统一检查结束原因，截断输出不能送去判分。 */
+function checkCompletion(reason) {
+  if (reason === 'length') throw new Error('模型输出达到长度上限，未完整生成');
+  if (reason === 'content_filter') throw new Error('模型输出被内容过滤拦截');
+}
+
+/** 逐段消费 SSE；兼容忽略 stream 参数的渠道返回 JSON，接收大小始终受限。 */
+async function readChatResponse(response, maxBytes) {
+  if (!response.body) throw new Error('OpenAI Chat Completions 流没有响应体');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8', {fatal: true});
+  const parts = [];
+  const refusals = [];
+  let buffer = '';
+  let mode = null;
+  let received = 0;
+  let ended = false;
+  let done = false;
+  let finishReason = null;
+  const raw = {choices: [], usage: null};
+
+  const event = (block) => {
+    const data = block.split(/\r?\n/).filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).replace(/^ /, '')).join('\n');
+    if (!data) return;
+    if (data === '[DONE]') { done = true; return; }
+    let payload;
+    try { payload = JSON.parse(data); }
+    catch { throw new Error('OpenAI Chat Completions 流包含无效 JSON 事件'); }
+    if (payload.error || payload.type === 'error') {
+      const error = payload.error || payload;
+      const code = typeof error.code === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(error.code)
+        ? error.code : null;
+      throw new Error(`OpenAI Chat Completions 流返回错误${code ? `（${code}）` : ''}`);
+    }
+    if (payload.usage) raw.usage = payload.usage;
+    if (payload.id) raw.id = payload.id;
+    if (payload.model) raw.model = payload.model;
+    // 本项目只请求一个候选，不拼接其他 index 的内容或推理字段。
+    const choice = (payload.choices || []).find(item => (item.index ?? 0) === 0);
+    if (!choice) return;
+    const delta = choice.delta || {};
+    const text = messageText({content: delta.content});
+    if (text) parts.push(text);
+    if (typeof delta.refusal === 'string') refusals.push(delta.refusal);
+    if (choice.finish_reason != null) finishReason = choice.finish_reason;
+  };
+
+  try {
+    while (!done) {
+      const {done: eof, value} = await reader.read();
+      if (eof) { ended = true; break; }
+      received += value.byteLength;
+      if (received > maxBytes) throw new Error('渠道响应超过大小限制');
+      buffer += decoder.decode(value, {stream: true});
+      if (!mode && buffer.trim()) mode = /^[\s]*[\[{]/.test(buffer) ? 'json' : 'sse';
+      if (mode === 'json') continue;
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() || '';
+      for (const block of blocks) { event(block); if (done) break; }
+    }
+    buffer += decoder.decode();
+    if (mode === 'json') {
+      console.warn('[Chat Completions] 渠道忽略流式请求，返回了同步 JSON');
+      return JSON.parse(buffer);
+    }
+    if (!done && buffer.trim()) event(buffer);
+    if (!done && finishReason == null) {
+      throw new Error('上游 Chat Completions 流在生成完成前断开，未收到结束标记');
+    }
+    checkCompletion(finishReason);
+    raw.choices = [{index: 0, finish_reason: finishReason,
+      message: {role: 'assistant', content: parts.join(''), refusal: refusals.join('')}}];
+    return raw;
+  } finally {
+    if (!ended) await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 module.exports = class OpenAIChatProvider {
@@ -188,7 +271,7 @@ module.exports = class OpenAIChatProvider {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Accept: 'application/json',
+          Accept: 'text/event-stream, application/json',
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
@@ -202,11 +285,14 @@ module.exports = class OpenAIChatProvider {
           errorText: errorText.slice(0, 4096),
         };
       }
-      const data = await response.json();
-      if (data && data.error) {
+      const tokens = Number(body.max_completion_tokens || body.max_tokens) || 32768;
+      const maxBytes = Math.max(64 * 1024, tokens * 128 * 6 + 64 * 1024);
+      const data = await readChatResponse(response, maxBytes);
+      if (data && (data.error || data.type === 'error')) {
         return {error: 'OpenAI 接口返回错误', errorText: ''};
       }
       const choices = Array.isArray(data && data.choices) ? data.choices : [];
+      checkCompletion(choices[0]?.finish_reason);
       const output = messageText(choices[0] && choices[0].message);
       if (!output || !output.trim()) {
         return {error: '模型没有返回文本内容', errorText: ''};
