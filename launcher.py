@@ -4,6 +4,7 @@
 import threading
 import webbrowser
 import ctypes
+import socket
 import sys
 import traceback
 
@@ -34,8 +35,18 @@ def open_browser():
     webbrowser.open("http://127.0.0.1:8787/")
 
 
+def service_already_running():
+    """检测 8787 端口是否已有服务在监听，用于重复双击启动时直接复用现有服务。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", 8787)) == 0
+
+
 def main():
-    """初始化数据库、启动浏览器定时任务并运行 FastAPI 服务。"""
+    """初始化数据库、启动浏览器定时任务并运行 FastAPI 服务；服务已在运行时只打开界面。"""
+    if service_already_running():
+        open_browser()
+        return
     try:
         con = server.get_con()
         con.close()
