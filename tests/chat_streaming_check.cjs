@@ -1,6 +1,6 @@
 // Chat Completions 题库适配器回归：验证分片、用量、兼容降级、断流和超时取消。
 const assert = require('node:assert/strict');
-const Provider = require('../openai_chat_provider.cjs');
+const Provider = require('../providers/openai_chat_provider.cjs');
 const config = {apiBaseUrl: 'https://relay.invalid/v1', apiKey: 'sk-test', model: 'gpt-6.1-sol',
   max_tokens: 2048, max_tokens_field: 'max_completion_tokens', requestTimeoutMs: 1000, reasoning_effort: 'xhigh'};
 const chunk = (content, finish_reason = null) => ({choices: [{index: 0, delta: {content}, finish_reason}]});

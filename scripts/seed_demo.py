@@ -8,8 +8,8 @@
   - B站：前 5 天正常，第 6 天起掺水
   - C站：一直保持稳定
 
-运行：python seed_demo.py
-注意：会清空 data/history.db 中的历史数据，正式使用前请勿重复运行。
+在项目根目录运行：python -m scripts.seed_demo
+注意：会清空当前数据目录下 data/history.db 中的历史数据。
 """
 
 import datetime

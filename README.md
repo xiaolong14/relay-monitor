@@ -247,23 +247,15 @@ SVG 生成按上游错误码判断是否自动重试：Responses 顶层 `error`�
 
 ```
 relay-monitor/
-├── server.py            # Web 服务（API + 定时器 + 静态页）
-├── launcher.py          # 跨平台启动器（启动服务并自动打开浏览器）
-├── monitor.py           # 评测引擎封装（promptfoo 调用/判分/基线/日报）
-├── datasets.py          # 开源数据集下载与抽样
-├── build_desktop.py     # Windows EXE 打包脚本（PyInstaller）
-├── make_package.py      # 源码分发包打包脚本
-├── config.json          # 初始配置（首次运行导入 DB 后以界面配置为准）
-├── request_options.py  # 评测与动画生成共用的推理参数约定
-├── openai_responses_provider.cjs # OpenAI Responses SSE 评测适配器
-├── default_aime_30.json # 全新安装默认题库（AIME 30 题）
-├── requirements.txt     # Python 依赖
-├── package.json         # Node 依赖（promptfoo）
-├── static/index.html    # 管理界面（单文件）
-├── docs/                # 截图与文档
-├── data/history.db      # SQLite 数据库（自动生成，勿提交）
-├── generated/           # promptfoo 配置与结果（自动生成，含明文 Key，勿提交）
-└── reports/             # 每日 HTML 日报（自动生成）
+├── server.py、launcher.py、monitor.py  # Web、桌面启动和命令行评测入口
+├── relay_monitor/                     # Python 题库、请求参数、传输和 SVG 模块
+├── providers/                         # Node 评测适配器和流式传输
+├── resources/                         # 默认 AIME 题库和 SVG 结构题卡
+├── static/                            # 管理页面和前端素材
+├── scripts/                           # 桌面构建、源码分发和演示数据工具
+├── tests/                             # 回归测试、浏览器检查和评分样本
+├── docs/、memory-bank/                # 使用资料、技术说明和开发记录
+└── config.json                        # 首次运行使用的初始配置
 ```
 
 ## 常见问题
@@ -273,6 +265,10 @@ A: 确认在项目目录执行过 `npm install promptfoo@0.115.0`，且 `node_mo
 
 **Q: promptfoo 提示 Node 版本过低？**
 A: 项目锁定的 0.115.0 只需 Node ≥ 18。若安装了最新版 promptfoo 需要 Node ≥ 22.22，请 `npm install promptfoo@0.115.0` 降级，或升级 Node。
+
+源码版运行后在项目根目录生成 `data/`、`generated/`、`reports/` 和 `logs/`。这些目录可能包含 API Key、渠道配置和历史结果，均由 Git 忽略。
+
+安装、启动和桌面构建的双击脚本集中在根目录。开发分发可从根目录运行 `python scripts/make_package.py` 生成源码压缩包。执行 `python monitor.py` 会通过实际配置的渠道运行一轮评测。
 
 **Q: 评测全失败显示「认证失败(Key无效)」？**
 A: 检查 API Key 与 Base URL。OpenAI Chat Completions／Responses 的地址通常以 `/v1` 结尾；Anthropic Messages 兼容带或不带 `/v1`。

@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
-from request_options import (
+from .request_options import (
     DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, token_budget,
     DEFAULT_API_TIMEOUT_MINUTES, DEFAULT_REASONING_EFFORT, api_timeout_seconds,
     anthropic_message_params, degrade_request_body, endpoint_url,

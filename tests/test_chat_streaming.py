@@ -12,8 +12,8 @@ import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import svg_artwork
-from request_options import degrade_request_body
+from relay_monitor import svg_artwork
+from relay_monitor.request_options import degrade_request_body
 
 
 RELAY = {"protocol": "openai", "model": "gpt-6.1-sol", "apiKey": "sk-test",
@@ -186,7 +186,7 @@ class ChatStreamingTests(unittest.TestCase):
         try:
             self.assertIn("鹈鹕", svg_artwork.generate_svg({**RELAY, "baseUrl": base}, urlopen=open_response))
             script = r"""
-const Provider = require('./openai_chat_provider.cjs');
+const Provider = require('./providers/openai_chat_provider.cjs');
 new Provider({config:{apiBaseUrl:process.argv[1], apiKey:'sk-test', model:'gpt-6.1-sol',
   max_tokens:2048, requestTimeoutMs:2000}}).callApi('测试').then(result=>process.stdout.write(JSON.stringify(result)));
 """

@@ -12,24 +12,30 @@
 import zipfile
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+BASE = Path(__file__).resolve().parents[1]
 OUT = BASE.parent / "relay-monitor.zip"
 
-# 需要打包的文件清单（白名单方式，最安全）
+# 白名单使用项目相对路径，解压后保留源码运行时的目录结构。
 INCLUDE = [
     "README.md",
     "requirements.txt",
     "package.json",
     "config.json",      # 仅含示例占位符 Key（sk-替换成xx的KEY），无真实数据
-    "default_aime_30.json",
+    "resources/default_aime_30.json",
     "server.py",
     "launcher.py",
     "monitor.py",
-    "request_options.py",
-    "anthropic_provider.cjs",
-    "openai_responses_provider.cjs",
-    "datasets.py",
-    "seed_demo.py",
+    "relay_monitor/__init__.py",
+    "relay_monitor/app_paths.py",
+    "relay_monitor/codegrade.py",
+    "relay_monitor/datasets.py",
+    "relay_monitor/request_options.py",
+    "relay_monitor/svg_artwork.py",
+    "providers/anthropic_provider.cjs",
+    "providers/openai_responses_provider.cjs",
+    "providers/openai_chat_provider.cjs",
+    "scripts/__init__.py",
+    "scripts/seed_demo.py",
     "run_daily.bat",
     "setup_task.bat",
     "安装依赖-Windows.bat",
@@ -37,14 +43,21 @@ INCLUDE = [
     "安装依赖-macOS.command",
     "启动-macOS.command",
     "static/index.html",
+    "static/assets/app-icon-1.png",
+    "static/assets/app-icon.ico",
+    "static/assets/bg-twilight.jpg",
+    "static/assets/card-paper.png",
+    "static/assets/kraft-desk.png",
+    "static/assets/logo.webp",
 ]
+
+missing = [name for name in INCLUDE if not (BASE / name).is_file()]
+if missing:
+    raise SystemExit(f"打包失败，缺少文件：{', '.join(missing)}")
 
 with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as zf:
     for name in INCLUDE:
         p = BASE / name
-        if not p.exists():
-            print(f"警告: 缺少 {name}，已跳过")
-            continue
         info = zipfile.ZipInfo.from_file(p, f"relay-monitor/{name}")
         if name.endswith(".command"):
             info.external_attr = 0o100755 << 16

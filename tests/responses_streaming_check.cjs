@@ -1,6 +1,6 @@
 // Responses 流式结束契约：终止事件立即结束，断流不能送去判分。
 const assert = require('node:assert/strict');
-const Provider = require('../openai_responses_provider.cjs');
+const Provider = require('../providers/openai_responses_provider.cjs');
 const config = {apiBaseUrl: 'https://relay.invalid/v1', apiKey: 'sk-test', model: 'gpt-6.1-sol',
   max_output_tokens: 2048, requestTimeoutMs: 200, reasoning_effort: 'xhigh', stream: false};
 const wire = (...events) => events.map(event => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\r\n\r\n`).join('');

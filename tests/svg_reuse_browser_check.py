@@ -9,7 +9,7 @@ from PIL import Image, ImageChops
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import svg_artwork
+from relay_monitor import svg_artwork
 
 
 SOURCE = '''<svg xmlns="http://www.w3.org/2000/svg"

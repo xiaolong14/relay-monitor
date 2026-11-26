@@ -10,7 +10,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import svg_artwork
+from relay_monitor import svg_artwork
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,7 +108,7 @@ class ResponsesStreamingTests(unittest.TestCase):
                 urlopen=lambda request, **_kwargs: urllib.request.urlopen(request, timeout=1))
             self.assertIn("鹈鹕", result)
             script = r"""
-const Provider = require('./openai_responses_provider.cjs');
+const Provider = require('./providers/openai_responses_provider.cjs');
 new Provider({config:{apiBaseUrl:process.argv[1], apiKey:'sk-test', model:'gpt-6.1-sol',
   max_output_tokens:2048, requestTimeoutMs:1000}}).callApi('测试').then(result=>process.stdout.write(JSON.stringify(result)));
 """

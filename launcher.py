@@ -8,7 +8,7 @@ import socket
 import sys
 import traceback
 
-from app_paths import USER_DATA_DIR
+from relay_monitor.app_paths import USER_DATA_DIR
 
 
 def configure_frozen_output():

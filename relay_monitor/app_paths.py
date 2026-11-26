@@ -7,11 +7,14 @@ import sys
 from pathlib import Path
 
 
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+
 def resource_dir():
     """返回只读资源目录，兼容源码运行和 PyInstaller 冻结程序。"""
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
-    return Path(__file__).resolve().parent
+    return PROJECT_DIR
 
 
 def user_data_dir():
@@ -20,7 +23,7 @@ def user_data_dir():
     if override:
         return Path(override).expanduser().resolve()
     if not getattr(sys, "frozen", False):
-        return Path(__file__).resolve().parent
+        return PROJECT_DIR
     system = platform.system()
     if system == "Windows":
         root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 
-BASE = Path(__file__).resolve().parent
+BASE = Path(__file__).resolve().parents[1]
 DIST = BASE / "desktop-dist"
 
 
@@ -22,7 +22,7 @@ def prepare_node_runtime():
     """复制当前平台 Node 可执行文件到应用内置运行时目录。"""
     node = shutil.which("node")
     if not node:
-        raise SystemExit("未找到 Node.js，请先安装 Node.js 18-22 LTS")
+        raise SystemExit("未找到 Node.js，请先安装 Node.js 20.18.1 或更高版本（推荐 22 LTS）")
     target = BASE / "node_runtime"
     if platform.system() == "Windows":
         target.mkdir(exist_ok=True)
@@ -55,9 +55,8 @@ def build():
         "--specpath", str(BASE / "build-desktop"),
         "--add-data", f"{BASE / 'static'}{separator}static",
         "--add-data", f"{BASE / 'config.json'}{separator}.",
-        "--add-data", f"{BASE / 'anthropic_provider.cjs'}{separator}.",
-        "--add-data", f"{BASE / 'openai_responses_provider.cjs'}{separator}.",
-        "--add-data", f"{BASE / 'default_aime_30.json'}{separator}.",
+        "--add-data", f"{BASE / 'providers'}{separator}providers",
+        "--add-data", f"{BASE / 'resources'}{separator}resources",
         "--add-data", f"{BASE / 'node_modules'}{separator}node_modules",
         "--add-data", f"{BASE / 'node_runtime'}{separator}node_runtime",
         str(BASE / "launcher.py"),

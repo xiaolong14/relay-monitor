@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 import monitor
 import server
-import svg_artwork
+from relay_monitor import svg_artwork
 
 
 RELAY = {

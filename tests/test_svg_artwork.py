@@ -8,8 +8,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from typing import get_args
 
-import svg_artwork
-from request_options import AnthropicReasoningEffort
+from relay_monitor import svg_artwork
+from relay_monitor.request_options import AnthropicReasoningEffort
 
 
 SAFE_ANIMATED_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">

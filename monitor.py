@@ -27,8 +27,8 @@ import time
 from concurrent import futures
 from pathlib import Path
 
-from app_paths import RESOURCE_DIR, USER_DATA_DIR
-from request_options import (
+from relay_monitor.app_paths import RESOURCE_DIR, USER_DATA_DIR
+from relay_monitor.request_options import (
     DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, token_budget,
     DEFAULT_API_TIMEOUT_MINUTES, api_timeout_seconds,
     DEFAULT_REASONING_EFFORT, reasoning_setting_key, resolve_reasoning_effort,
@@ -38,7 +38,8 @@ from request_options import (
 # ---------------- 目录与文件路径常量 ----------------
 BASE_DIR = RESOURCE_DIR
 CONFIG_PATH = BASE_DIR / "config.json"
-DEFAULT_QUESTIONS_PATH = BASE_DIR / "default_aime_30.json"
+DEFAULT_QUESTIONS_PATH = BASE_DIR / "resources" / "default_aime_30.json"
+PROVIDERS_DIR = BASE_DIR / "providers"
 GEN_DIR = USER_DATA_DIR / "generated"      # promptfoo 生成的配置与结果
 DATA_DIR = USER_DATA_DIR / "data"          # SQLite 历史库目录
 REPORT_DIR = USER_DATA_DIR / "reports"     # HTML 日报输出目录
@@ -78,15 +79,15 @@ def gen_provider_yaml(relay, questions, max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
     timeout_ms = api_timeout_seconds(api_timeout_minutes) * 1000
     if protocol == "anthropic":
         # 原生 Anthropic provider 未暴露 SDK 超时设置，通过适配器保留其请求和判分行为。
-        provider_id = str(BASE_DIR / "anthropic_provider.cjs")
+        provider_id = str(PROVIDERS_DIR / "anthropic_provider.cjs")
         params = anthropic_message_params(relay["model"], reasoning_effort)
     elif protocol == "openai-responses":
         # 项目内适配器负责解析 Responses SSE，并统一请求超时和错误格式。
-        provider_id = str(BASE_DIR / "openai_responses_provider.cjs")
+        provider_id = str(PROVIDERS_DIR / "openai_responses_provider.cjs")
         params = responses_params(relay["model"], reasoning_effort)
     else:
         # 项目内适配器严格按配置字段构造请求体，不再依赖 promptfoo 按模型名猜测。
-        provider_id = str(BASE_DIR / "openai_chat_provider.cjs")
+        provider_id = str(PROVIDERS_DIR / "openai_chat_provider.cjs")
         params = openai_chat_params(relay["model"], reasoning_effort)
 
     lines = [
@@ -253,7 +254,7 @@ def grade_code_questions(out_json, questions, log=print):
     if not targets:
         return
 
-    import codegrade
+    from relay_monitor import codegrade
     results = {}
     with futures.ThreadPoolExecutor(max_workers=6) as pool:
         future_map = {

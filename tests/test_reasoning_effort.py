@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 import monitor
 import server
-from request_options import (
+from relay_monitor.request_options import (
     AnthropicReasoningEffort, OpenAIReasoningEffort, degrade_request_body,
     endpoint_url, normalize_base_url, openai_chat_params, resolve_reasoning_effort,
 )
@@ -211,7 +211,7 @@ class ReasoningProviderTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "需要 Node 验证 Responses SSE 适配器")
     def test_openai_responses_provider_consumes_sse_and_sends_native_body(self):
         script = r"""
-const Provider = require('./openai_responses_provider.cjs');
+const Provider = require('./providers/openai_responses_provider.cjs');
 const captured = {};
 global.fetch = async (url, options) => {
   captured.url = url;
@@ -255,7 +255,7 @@ global.fetch = async (url, options) => {
     @unittest.skipUnless(shutil.which("node"), "需要 Node 验证 Responses 标准错误事件")
     def test_openai_responses_provider_keeps_top_level_error_code(self):
         script = r"""
-const Provider = require('./openai_responses_provider.cjs');
+const Provider = require('./providers/openai_responses_provider.cjs');
 global.fetch = async () => new Response(
   'data: {"type":"error","code":"stream_timeout","message":"upstream detail"}\n\n',
   {headers: {'content-type': 'text/event-stream'}},
@@ -332,7 +332,7 @@ global.fetch = async () => new Response(
         script = r"""
 const fs = require('node:fs');
 const yaml = require('js-yaml');
-const Provider = require('./openai_chat_provider.cjs');
+const Provider = require('./providers/openai_chat_provider.cjs');
 const cases = JSON.parse(fs.readFileSync(0, 'utf8'));
 (async () => {
   const results = [];

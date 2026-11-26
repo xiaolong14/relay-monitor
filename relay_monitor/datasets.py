@@ -28,8 +28,8 @@ import random
 import re
 import urllib.request
 
-from app_paths import USER_DATA_DIR
-import codegrade
+from . import codegrade
+from .app_paths import USER_DATA_DIR
 
 # 题目统一加的作答要求（保证输出格式便于客观判分）
 GSM8K_SUFFIX = "\n请推理后直接给出最终数字答案，只输出一个数字。"
