@@ -131,6 +131,64 @@ class SVGArtworkTests(unittest.TestCase):
         self.assertNotIn("https://", cleaned)
         self.assertIn('viewBox="0 0 800 420"', cleaned)
 
+    def test_svg_preserves_local_clipping_patterns_and_color(self):
+        source = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 60">
+          <defs>
+            <path id="outline" d="M10 10H50V40H10Z"/>
+            <clipPath id="body-clip" clipPathUnits="userSpaceOnUse">
+              <use href="#outline" clip-rule="evenodd"/>
+            </clipPath>
+            <pattern id="paper" width="8" height="8" patternUnits="userSpaceOnUse"
+                patternContentUnits="userSpaceOnUse" patternTransform="rotate(15)"
+                color="#81977a">
+              <circle cx="2" cy="2" r="1" fill="currentColor"/>
+            </pattern>
+          </defs>
+          <g clip-path="url('#body-clip')">
+            <rect width="80" height="60" fill='url("#paper")'/>
+          </g>
+          <g clip-path="none"/>
+        </svg>'''
+        root = ET.fromstring(svg_artwork.sanitize_svg(source))
+        ns = {"s": svg_artwork.SVG_NAMESPACE}
+        clip = root.find("s:defs/s:clipPath", ns)
+        self.assertIsNotNone(clip)
+        self.assertEqual(clip.get("clipPathUnits"), "userSpaceOnUse")
+        self.assertEqual(clip.find("s:use", ns).get("href"), "#outline")
+        self.assertEqual(clip.find("s:use", ns).get("clip-rule"), "evenodd")
+        pattern = root.find("s:defs/s:pattern", ns)
+        self.assertEqual(pattern.attrib, {
+            "id": "paper", "width": "8", "height": "8", "patternUnits": "userSpaceOnUse",
+            "patternContentUnits": "userSpaceOnUse", "patternTransform": "rotate(15)",
+            "color": "#81977a",
+        })
+        self.assertEqual(pattern.find("s:circle", ns).get("fill"), "currentColor")
+        groups = root.findall("s:g", ns)
+        self.assertEqual(groups[0].get("clip-path"), "url('#body-clip')")
+        self.assertEqual(groups[0].find("s:rect", ns).get("fill"), 'url("#paper")')
+        self.assertEqual(groups[1].get("clip-path"), "none")
+
+    def test_svg_rejects_external_clipping_and_pattern_references(self):
+        source = '''<svg xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <pattern id="paper" href="https://example.invalid/paper.svg#pattern">
+              <script>alert(1)</script><image href="https://example.invalid/pixel.png"/>
+            </pattern>
+          </defs>
+          <g clip-path="url('https://example.invalid/clip.svg#outline')"/>
+          <g clip-path="url( '#outline' ) url(https://example.invalid/clip.svg)"/>
+          <g clip-path="url(data:image/svg+xml,unsafe)"/>
+          <rect fill="url('https://example.invalid/paper.svg#pattern')"/>
+        </svg>'''
+        root = ET.fromstring(svg_artwork.sanitize_svg(source))
+        ns = {"s": svg_artwork.SVG_NAMESPACE}
+        pattern = root.find("s:defs/s:pattern", ns)
+        self.assertIsNotNone(pattern)
+        self.assertIsNone(pattern.get("href"))
+        self.assertEqual(len(pattern), 0)
+        self.assertTrue(all(group.get("clip-path") is None for group in root.findall("s:g", ns)))
+        self.assertIsNone(root.find("s:rect", ns).get("fill"))
+
     def test_static_svg_is_accepted(self):
         """提示词要求静态画面，不含动画标签的 SVG 也应正常通过净化。"""
         cleaned = svg_artwork.sanitize_svg(

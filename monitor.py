@@ -9,7 +9,7 @@
 4. 将今日分数与近 N 天滑动基线对比，判断「正常 / 疑似掺水 / 恢复」
 5. 生成 HTML 日报（reports/日期.html），并推荐当前最优中转站
 
-依赖：Node.js 18+ 与 promptfoo（npm install -g promptfoo）、Python 3.8+（仅标准库）
+依赖：Node.js 20.18.1+ 与本地 promptfoo、Python 3.10+（安装 requirements.txt）
 """
 
 import collections

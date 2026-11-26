@@ -14,7 +14,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-  echo "未找到 Node.js，请先安装 Node.js 18 或更高 LTS 版本："
+  echo "未找到 Node.js，请先安装 Node.js 20.18.1 或更高版本（推荐 22 LTS）："
   echo "https://nodejs.org/"
   read -r -p "按回车键关闭..."
   exit 1

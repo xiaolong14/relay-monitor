@@ -1,4 +1,5 @@
 // OpenAI Responses 流式适配器：让长请求持续接收 SSE，避免代理等待完整响应时超时。
+const streamFetch = require('./stream_transport.cjs');
 
 function extractResponseText(response) {
   if (!response || typeof response !== 'object') return '';
@@ -175,7 +176,7 @@ module.exports = class OpenAIResponsesStreamProvider {
       let requestBody = body;
       let lastStatus = null;
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        const response = await fetch(`${String(apiBaseUrl).replace(/\/$/, '')}/responses`, {
+        const response = await streamFetch(`${String(apiBaseUrl).replace(/\/$/, '')}/responses`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

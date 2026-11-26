@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
+from . import stream_transport
 from .request_options import (
     DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, token_budget,
     DEFAULT_API_TIMEOUT_MINUTES, DEFAULT_REASONING_EFFORT, api_timeout_seconds,
@@ -24,6 +25,9 @@ from .request_options import (
 
 
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+LOCAL_URL_REFERENCE = re.compile(
+    r"""url\(\s*(?P<quote>['"]?)#[A-Za-z_][\w.:-]{0,99}(?P=quote)\s*\)""", re.IGNORECASE,
+)
 # 为长输出保留足够的接收空间；字符额度按 Token 预算伸缩，JSON 转义单独预留。
 SVG_CHARS_PER_TOKEN = 128
 MAX_SVG_CHARS = DEFAULT_MAX_OUTPUT_TOKENS * SVG_CHARS_PER_TOKEN
@@ -32,14 +36,16 @@ ANIMATION_TAGS = {"animate", "animateTransform", "set"}
 ALLOWED_TAGS = {
     "svg", "g", "path", "circle", "ellipse", "line", "polyline", "polygon",
     "rect", "text", "tspan", "defs", "use", "symbol", "linearGradient", "radialGradient",
-    "stop", "animate", "animateTransform", "set", "title", "desc",
+    "stop", "clipPath", "pattern", "animate", "animateTransform", "set", "title", "desc",
 }
 ALLOWED_ATTRIBUTES = {
     "id", "viewBox", "preserveAspectRatio", "width", "height", "x", "y", "x1", "x2", "y1", "y2",
     "cx", "cy", "r", "rx", "ry", "d", "points", "fill", "fill-opacity",
-    "fill-rule", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin",
+    "fill-rule", "clip-path", "clip-rule", "clipPathUnits", "color",
+    "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin",
     "stroke-dasharray", "stroke-dashoffset", "stroke-opacity", "opacity", "transform",
     "offset", "stop-color", "stop-opacity", "gradientUnits", "gradientTransform",
+    "patternUnits", "patternContentUnits", "patternTransform",
     "font-size", "font-family", "font-weight", "text-anchor", "dominant-baseline",
     "dx", "dy", "href", "attributeName", "attributeType", "from", "to", "values",
     "type",
@@ -178,6 +184,9 @@ def _capture_response_metadata(response):
     if response is None:
         return {}
     metadata = {}
+    http_version = getattr(response, "http_version", None)
+    if http_version:
+        metadata["http_version"] = http_version
     status = getattr(response, "status", None) or getattr(response, "code", None)
     if status is not None:
         metadata["http_status"] = status
@@ -859,9 +868,11 @@ def sanitize_svg(text, max_chars=MAX_SVG_CHARS):
             if name == "href" and not re.fullmatch(r"#[A-Za-z_][\w.:-]{0,99}", value):
                 removed_attributes[name] += 1
                 continue
-            if "url(" in value.lower() and not re.fullmatch(
-                    r"url\(\s*#[A-Za-z_][\w.:-]{0,99}\s*\)", value, re.IGNORECASE):
-                continue
+            # 裁剪和纹理引用只能指向当前 SVG 的定义，兼容带引号的片段地址。
+            if (name == "clip-path" and value.lower() != "none") or "url(" in value.lower():
+                if not LOCAL_URL_REFERENCE.fullmatch(value):
+                    removed_attributes[name] += 1
+                    continue
             # xlink:href 统一为现代 SVG href；只允许本文件内的 #id 引用。
             # use 原样复用净化后的定义，不展开图形，避免丢轮子或递归膨胀。
             cleaned.set(name, value)
@@ -902,8 +913,12 @@ def sanitize_svg(text, max_chars=MAX_SVG_CHARS):
 def generate_svg(relay, urlopen=None, reasoning_effort=DEFAULT_REASONING_EFFORT,
                  api_timeout_minutes=DEFAULT_API_TIMEOUT_MINUTES,
                  max_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_input_tokens=DEFAULT_MAX_INPUT_TOKENS,
-                 failure_log_path=None, failure_log_metadata=None):
-    """统一记录各协议失败证据；网络、解析、校验和意外异常共享同一入口。"""
+                 failure_log_path=None, failure_log_metadata=None, prompt=None):
+    """统一记录各协议失败证据；网络、解析、校验和意外异常共享同一入口。
+
+    prompt 为空时使用内置鹈鹕绘图提示词；服务端可从设置页传入自定义提示词，
+    便于调整画面约束、观察不同模型的真实差异。
+    """
     started = time.monotonic()
     diagnostic = {
         "metadata": {
@@ -919,7 +934,7 @@ def generate_svg(relay, urlopen=None, reasoning_effort=DEFAULT_REASONING_EFFORT,
     try:
         return _generate_svg_request(
             relay, diagnostic, urlopen, reasoning_effort, api_timeout_minutes,
-            max_tokens, max_input_tokens,
+            max_tokens, max_input_tokens, prompt,
         )
     except Exception as exc:
         metadata = diagnostic["metadata"]
@@ -1038,10 +1053,12 @@ def _open_with_retry(urlopen, protocol, endpoint, body, headers, timeout_seconds
 
 
 def _generate_svg_request(relay, diagnostic, urlopen, reasoning_effort,
-                          api_timeout_minutes, max_tokens, max_input_tokens):
+                          api_timeout_minutes, max_tokens, max_input_tokens, prompt=None):
     """通过中转站发送绘图提示词并返回已净化的 SVG。"""
+    user_prompt = (prompt or USER_PROMPT).strip()
     if urlopen is None:
-        urlopen = urllib.request.urlopen
+        urlopen = (urllib.request.urlopen if relay.get("protocol") == "anthropic"
+                   else stream_transport.urlopen)
     timeout_seconds = api_timeout_seconds(api_timeout_minutes)
     max_tokens = token_budget(max_tokens, "输出 Token 预算")
     max_input_tokens = token_budget(max_input_tokens, "输入 Token 预算")
@@ -1065,7 +1082,7 @@ def _generate_svg_request(relay, diagnostic, urlopen, reasoning_effort,
             **({"temperature": 0} if params["temperature"] is not None else {}),
             **({"thinking": params["thinking"]} if params["thinking"] else {}),
             **({"output_config": params["output_config"]} if params["output_config"] else {}),
-            "messages": [{"role": "user", "content": USER_PROMPT}],
+            "messages": [{"role": "user", "content": user_prompt}],
         }
         headers = {
             "Content-Type": "application/json",
@@ -1075,7 +1092,7 @@ def _generate_svg_request(relay, diagnostic, urlopen, reasoning_effort,
     elif protocol == "openai-responses":
         body = {
             "model": model,
-            "input": USER_PROMPT,
+            "input": user_prompt,
             "max_output_tokens": max_tokens,
             "stream": True,
             # 请求加密推理项以兼容渠道的 Responses 输出；该字段不是心跳，
@@ -1098,7 +1115,7 @@ def _generate_svg_request(relay, diagnostic, urlopen, reasoning_effort,
             **({"temperature": params["temperature"]} if params["temperature"] is not None else {}),
             **({"reasoning_effort": params["reasoning_effort"]} if params["reasoning_effort"] else {}),
             "messages": [
-                {"role": "user", "content": USER_PROMPT},
+                {"role": "user", "content": user_prompt},
             ],
         }
         headers = {

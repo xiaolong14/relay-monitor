@@ -50,7 +50,7 @@ pause
 exit /b 1
 
 :node_missing
-echo 未找到 Node.js 18 或更高版本。
+echo 未找到 Node.js，请安装 20.18.1 或更高版本（推荐 22 LTS）。
 echo 请访问 https://nodejs.org/ 安装 LTS 版本。
 pause
 exit /b 1

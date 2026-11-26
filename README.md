@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Node.js 18+](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js 20.18.1+](https://img.shields.io/badge/Node.js-20.18.1%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 
 > 你花钱买的 GPT / Claude 中转站 API，有没有被偷偷换成降智模型？
 > 这个系统每天用**开源标准竞赛题库**自动实测打分，用连续的历史基线告诉你：哪家在掺水、哪家恢复了、哪家现在最值得用。
@@ -97,7 +97,7 @@ Relay Monitor 把这三件事打包成一个可以长期挂着跑的 Web 系统�
 | 环境 | 下载地址 | 版本要求 |
 |---|---|---|
 | Python | [python.org/downloads](https://www.python.org/downloads/) | 3.10 或更高 |
-| Node.js | [nodejs.org](https://nodejs.org/) | 18 或更高（推荐 20/22 LTS） |
+| Node.js | [nodejs.org](https://nodejs.org/) | 20.18.1 或更高（推荐 22 LTS） |
 
 > - **Windows 装 Python 时务必勾选 `Add Python to PATH`**，其他全部默认下一步即可
 > - Node.js 官网会自动识别你的系统（Windows / macOS、Intel / Apple 芯片）
@@ -264,11 +264,10 @@ relay-monitor/
 A: 确认在项目目录执行过 `npm install promptfoo@0.115.0`，且 `node_modules/promptfoo/dist/src/main.js` 存在。
 
 **Q: promptfoo 提示 Node 版本过低？**
-A: 项目锁定的 0.115.0 只需 Node ≥ 18。若安装了最新版 promptfoo 需要 Node ≥ 22.22，请 `npm install promptfoo@0.115.0` 降级，或升级 Node。
+A: HTTP/2 长流保活使用锁定的 undici 7.29.0，要求 Node ≥ 20.18.1，推荐 22 LTS。升级 Node 后在项目目录执行 `npm install`。
 
-源码版运行后在项目根目录生成 `data/`、`generated/`、`reports/` 和 `logs/`。这些目录可能包含 API Key、渠道配置和历史结果，均由 Git 忽略。
-
-安装、启动和桌面构建的双击脚本集中在根目录。开发分发可从根目录运行 `python scripts/make_package.py` 生成源码压缩包。执行 `python monitor.py` 会通过实际配置的渠道运行一轮评测。
+**Q: 长时间生成如何保持流式连接？**
+A: SVG 与题库的 OpenAI 请求均使用 `stream:true`。公共传输层优先协商 HTTP/2，每 20 秒发送标准 PING 帧；不支持 HTTP/2 的服务继续使用 HTTP/1.1。请求总超时仍由设置控制，保活不会延长总时限，也不会增加模型生成请求。SVG 失败日志保留实际 HTTP 协议、上游请求 ID 和已收到的原始正文。
 
 **Q: 评测全失败显示「认证失败(Key无效)」？**
 A: 检查 API Key 与 Base URL。OpenAI Chat Completions／Responses 的地址通常以 `/v1` 结尾；Anthropic Messages 兼容带或不带 `/v1`。

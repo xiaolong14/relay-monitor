@@ -1,5 +1,6 @@
 // OpenAI Chat Completions 流式适配器：逐段解析 SSE，保留结束原因与 Token 用量，
 // 遇到上游 400/422 时按错误信息自动去掉或替换不兼容参数，避免整题因格式被拒。
+const streamFetch = require('./stream_transport.cjs');
 
 /**
  * 规范化基础地址：去掉末尾斜杠、重复版本段与接口路径。
@@ -267,7 +268,7 @@ module.exports = class OpenAIChatProvider {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
     try {
-      const response = await fetch(url, {
+      const response = await streamFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

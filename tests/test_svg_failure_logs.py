@@ -312,7 +312,7 @@ class FailureLogAPITests(unittest.TestCase):
         with patch.object(server, "get_con", side_effect=lambda: sqlite3.connect(self.db)), \
                 patch.object(server, "load_settings", return_value=settings), \
                 patch.object(server, "_svg_state_update"), \
-                patch.object(svg_artwork.urllib.request, "urlopen", side_effect=lambda *_a, **_k: Response(raw)):
+                patch.object(svg_artwork.stream_transport, "urlopen", side_effect=lambda *_a, **_k: Response(raw)):
             self.assertFalse(server._run_one_svg_generation(1, RELAY))
         listing = self.client.get("/api/svg-generations").json()
         rows = {row["id"]: row for row in listing["items"]}
@@ -353,7 +353,7 @@ class FailureLogAPITests(unittest.TestCase):
         with patch.object(server, "get_con", side_effect=lambda: sqlite3.connect(self.db)), \
                 patch.object(server, "load_settings", return_value=settings), \
                 patch.object(server, "_svg_state_update"), \
-                patch.object(svg_artwork.urllib.request, "urlopen", side_effect=open_response):
+                patch.object(svg_artwork.stream_transport, "urlopen", side_effect=open_response):
             self.assertTrue(server._run_one_svg_generation(1, {**RELAY, "model": "gpt-6.1-sol"}))
         self.assertEqual(len(requests), 2)
         self.assertEqual(requests[0], requests[1])
