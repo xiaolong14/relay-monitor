@@ -65,6 +65,27 @@ class ReasoningSettingsTests(unittest.TestCase):
     def test_new_database_imports_configured_effort(self):
         self.assertEqual(self.client.get("/api/settings").json()["reasoning_effort"], "high")
 
+    def test_svg_review_migrates_the_old_default_and_preserves_custom_prompt(self):
+        self.client.get("/api/settings")
+        prompts = server.svg_review
+        for old_prompt in (
+            prompts.LEGACY_REVIEW_PROMPT, prompts.V4_REVIEW_PROMPT, prompts.V5_REVIEW_PROMPT, prompts.V6_REVIEW_PROMPT,
+        ):
+            with self.subTest(old_rubric=old_prompt[:30]):
+                with closing(sqlite3.connect(self.db)) as con:
+                    server.save_setting(con, "svg_review_prompt", old_prompt)
+                self.assertEqual(self.client.get("/api/settings").json()["svg_review_prompt"], prompts.DEFAULT_REVIEW_PROMPT)
+                with closing(sqlite3.connect(self.db)) as con:
+                    self.assertEqual(con.execute("SELECT value FROM settings WHERE key='svg_review_prompt'").fetchone()[0], "")
+        for prompt, expected in (
+            ("只评构图", "只评构图"), ("", prompts.DEFAULT_REVIEW_PROMPT),
+            (prompts.V6_REVIEW_PROMPT, prompts.DEFAULT_REVIEW_PROMPT),
+            (prompts.DEFAULT_REVIEW_PROMPT, prompts.DEFAULT_REVIEW_PROMPT),
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(self.client.put("/api/settings", json={"svg_review_prompt": prompt}).status_code, 200)
+                self.assertEqual(self.client.get("/api/settings").json()["svg_review_prompt"], expected)
+
     def test_all_levels_roundtrip_and_old_clients_preserve_saved_value(self):
         self.client.get("/api/settings")
         for effort in get_args(OpenAIReasoningEffort):
@@ -75,6 +96,33 @@ class ReasoningSettingsTests(unittest.TestCase):
         self.client.put("/api/settings", json={"reasoning_effort": "low"})
         self.client.put("/api/settings", json={"max_tokens": 1024})
         self.assertEqual(self.client.get("/api/settings").json()["reasoning_effort"], "low")
+
+    def test_svg_review_retry_count_defaults_to_two_and_persists(self):
+        key = "svg_review_retry_count"
+        self.assertEqual(self.client.get("/api/settings").json()[key], 2)
+        for count in (0, 4):
+            self.assertEqual(self.client.put("/api/settings", json={key: count}).status_code, 200)
+            self.assertEqual(self.client.get("/api/settings").json()[key], count)
+        for invalid in (-1, 1.5, True, "4"):
+            self.assertEqual(self.client.put("/api/settings", json={key: invalid}).status_code, 422)
+        self.assertEqual(self.client.put("/api/settings", json={"reasoning_effort": "low"}).status_code, 200)
+        self.assertEqual(self.client.get("/api/settings").json()[key], 4)
+
+    def test_svg_review_fallback_is_optional_and_must_be_a_different_channel(self):
+        primary, backup = "svg_review_relay", "svg_review_fallback_relay"
+        self.assertEqual(self.client.get("/api/settings").json()[backup], "")
+        with closing(sqlite3.connect(self.db)) as con:
+            con.execute("CREATE TABLE relays(name TEXT PRIMARY KEY)")
+            con.executemany("INSERT INTO relays VALUES (?)", [("first",), ("second",)])
+            con.commit()
+        self.assertEqual(self.client.put("/api/settings", json={primary: "first", backup: "second"}).status_code, 200)
+        for invalid in ("first", "missing"):
+            self.assertEqual(self.client.put("/api/settings", json={backup: invalid}).status_code, 400)
+        self.assertEqual(self.client.put("/api/settings", json={primary: "second"}).status_code, 400)
+        self.assertEqual(self.client.put("/api/settings", json={"svg_review_retry_count": 1}).status_code, 200)
+        self.assertEqual(self.client.get("/api/settings").json()[backup], "second")
+        self.assertEqual(self.client.put("/api/settings", json={backup: ""}).status_code, 200)
+        self.assertEqual(self.client.get("/api/settings").json()[backup], "")
 
     def test_invalid_levels_are_rejected_without_overwriting_setting(self):
         self.client.get("/api/settings")
@@ -94,6 +142,7 @@ class ReasoningSettingsTests(unittest.TestCase):
         generate.assert_called_once_with(RELAY, reasoning_effort="medium", api_timeout_minutes=15,
                                          max_tokens=32768, max_input_tokens=262144,
                                          failure_log_path=server._svg_failure_log_path(1),
+                                         prompt=server.svg_artwork.USER_PROMPT,
                                          failure_log_metadata=ANY)
         self.assertEqual(generate.call_args.kwargs["failure_log_metadata"]["generation_id"], 1)
 

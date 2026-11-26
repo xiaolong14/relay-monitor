@@ -295,6 +295,7 @@ class FailureLogAPITests(unittest.TestCase):
                 id INTEGER PRIMARY KEY, relay TEXT, relay_label TEXT, model_id TEXT,
                 status TEXT, trigger TEXT, error_detail TEXT, requested_at TEXT,
                 started_at TEXT, completed_at TEXT, svg_content TEXT,
+                score REAL, score_detail TEXT,
                 attempts INTEGER NOT NULL DEFAULT 1)""")
             con.execute("CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT)")
             con.executemany(

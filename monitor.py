@@ -704,6 +704,8 @@ def init_db():
                requested_at TEXT NOT NULL,
                started_at TEXT,
                completed_at TEXT,
+               score REAL,
+               score_detail TEXT,
                attempts INTEGER NOT NULL DEFAULT 1)"""
     )
     # 旧表迁移：补充自动重试次数列，历史记录统一按 1 次尝试计。
@@ -711,6 +713,14 @@ def init_db():
     if "attempts" not in svg_cols:
         con.execute("ALTER TABLE svg_generations ADD COLUMN attempts INTEGER NOT NULL DEFAULT 1")
         print("[svg] 数据迁移：已为生成记录补充 attempts 列")
+    # 旧表迁移：补充本地规范判分总分与分项明细，历史记录保持 NULL。
+    for column, ddl in (
+        ("score", "ALTER TABLE svg_generations ADD COLUMN score REAL"),
+        ("score_detail", "ALTER TABLE svg_generations ADD COLUMN score_detail TEXT"),
+    ):
+        if column not in svg_cols:
+            con.execute(ddl)
+            print(f"[svg] 数据迁移：已为生成记录补充 {column} 列")
     # 同一渠道同一时间只允许一条活动任务，避免重复请求造成重复扣费。
     # 先收敛旧版本可能写入的重复活动记录，再建立 SQLite 部分唯一索引。
     duplicates = con.execute(

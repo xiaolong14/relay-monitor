@@ -360,6 +360,11 @@ label{display:block;margin:9px 0 4px;color:var(--sub);font-size:10.5px;font-weig
 .svg-elapsed{white-space:nowrap;font-variant-numeric:tabular-nums;font-family:var(--font-type)}
 .svg-elapsed.is-live{color:var(--gold)}
 .svg-retry{display:inline-flex;align-items:center;gap:4px;margin:0 0 4px;padding:1px 6px;border-radius:3px;background:var(--code-bg);color:var(--gold);font-size:10px;font-weight:600;white-space:nowrap}
+.svg-score{font-variant-numeric:tabular-nums;font-family:var(--font-type);font-weight:600;white-space:nowrap}
+.svg-score.is-good{color:var(--green)}
+.svg-score.is-mid{color:var(--gold)}
+.svg-score.is-bad{color:var(--red)}
+.svg-score.is-na{color:var(--sub);font-weight:400}
 .svg-retry .lucide{width:11px;height:11px}
 
 /* ---------- 模型拉取反馈 ---------- */
@@ -688,6 +693,37 @@ dialog .form2 .row{gap:6px}
     <div class="card">
       <h2><i data-lucide="sliders-horizontal"></i>判定参数</h2>
       <div class="form2">
+        <label for="s_svg_prompt" style="margin-top:10px">绘制提示词</label>
+        <textarea id="s_svg_prompt" rows="8" placeholder="描述要生成的画面，留空则使用内置鹈鹕骑车提示词"></textarea>
+        <p class="muted" style="margin:6px 0 0">提示词越具体，各模型画面越接近；想比较模型差异可只保留主题和画风要求。更换主题时请同步调整评分提示词，改动对下一次生成生效。</p>
+      </div>
+      <div class="card">
+        <h2><i data-lucide="scan-eye"></i>AI 评分（实际画面评审）</h2>
+        <label style="margin:0"><input type="checkbox" id="s_svg_review_enabled" style="width:auto"> 生成完成后自动评分</label>
+        <label for="s_svg_review_relay" style="margin-top:8px">评分渠道</label>
+        <select id="s_svg_review_relay"><option value="">未配置（不评分）</option></select>
+        <label for="s_svg_review_fallback_relay">备用评分渠道</label>
+        <select id="s_svg_review_fallback_relay"><option value="">未配置</option></select>
+        <p class="muted" style="margin:6px 0 0">主渠道遇到上游网关故障时，剩余重试立即改走备用渠道。请选支持同一评分模型且能接收图片的渠道。</p>
+        <label for="s_svg_review_model">评分模型（留空使用渠道默认模型）</label>
+        <input id="s_svg_review_model" placeholder="如 gpt-6.1-terra">
+        <label for="s_svg_review_reasoning" style="margin-top:8px">思考等级</label>
+        <select id="s_svg_review_reasoning">
+          <option value="low">低（low，默认）</option>
+          <option value="none">关闭思考（none）</option>
+          <option value="medium">中（medium）</option>
+          <option value="high">高（high）</option>
+          <option value="xhigh">极高（xhigh）</option>
+          <option value="max">最高（max）</option>
+          <option value="default">使用模型默认值（不发送参数）</option>
+        </select>
+        <p class="muted" style="margin:6px 0 0">评分单独使用此等级；部分模型不支持 minimal，因此不提供该档。报错不支持时换 none 或 low。</p>
+        <label for="s_svg_review_retry_count" style="margin-top:8px">评分失败后立即重试次数</label>
+        <input type="number" id="s_svg_review_retry_count" min="0" step="1" value="2">
+        <p class="muted" style="margin:6px 0 0">默认重试 2 次，加上首次最多请求 3 次。设为 0 可关闭。临时故障或评分结果不完整时立即重试。</p>
+        <label for="s_svg_review_prompt" style="margin-top:8px">评分提示词</label>
+        <textarea id="s_svg_review_prompt" rows="12"></textarea>
+        <p class="muted" style="margin:6px 0 0">评分只依据成品图。自定义提示词需返回 score 字段，留空保存可恢复默认。</p>
         <div><label>基线窗口（天，默认 7）</label><input type="number" id="s_baseline" min="3" max="30" value="7"></div>
         <div><label>观察期最少历史（天，默认 3）</label><input type="number" id="s_minhist" min="1" max="10" value="3"></div>
         <div><label>掺水判定阈值（分，默认 8）</label><input type="number" id="s_drop" step="0.5" value="8"></div>
@@ -783,6 +819,7 @@ dialog .form2 .row{gap:6px}
 
 <div id="toast"></div>
 
+  <p class="svg-preview-dialog-note" id="svgPreviewComment" hidden></p>
 <script>
 /* ---------------- 通用 ---------------- */
 const $ = id => document.getElementById(id);
@@ -1196,7 +1233,7 @@ async function loadSvgGenerations(){
   const rows = data.items || [];
   const table = $('svgGenerationTable');
   if(!table.tHead || !table.tBodies.length){
-    table.innerHTML = '<thead><tr><th>动画预览</th><th>生成渠道</th><th>模型</th><th>状态</th><th>触发方式</th><th>请求时间</th><th>完成时间</th><th>耗时</th><th>说明</th></tr></thead><tbody></tbody>';
+    table.innerHTML = '<thead><tr><th>动画预览</th><th>生成渠道</th><th>模型</th><th>状态</th><th>触发方式</th><th>请求时间</th><th>分数</th><th>耗时</th><th>说明</th></tr></thead><tbody></tbody>';
   }
   const body = table.tBodies[0];
   const nextSignatures = new Map();
@@ -1224,10 +1261,21 @@ async function loadSvgGenerations(){
     const relayName = escapeHtml(row.relay);
     const model = escapeHtml(row.model_id);
     const preview = row.status === 'completed'
-      ? `<div class="svg-preview-trigger" role="button" tabindex="0" data-svg-preview-id="${id}" data-svg-preview-title="${escapeHtml(`${row.relay_label} · ${row.model_id}`)}" data-svg-preview-time="${escapeHtml(formatSvgTime(row.completed_at))}" aria-label="点击放大播放 ${relayLabel} 生成的鹈鹕骑车动画"><iframe class="svg-preview" src="/api/svg-generations/${id}/preview" title="${relayLabel} 生成的鹈鹕骑车动画" sandbox loading="lazy"></iframe><span class="svg-preview-hint">点击放大播放</span></div>`
-      : `<div class="svg-preview-empty"><i data-lucide="${icon}" class="${row.status==='generating'?'spin':''}"></i>${label}</div>`;
+      ? `<div class="svg-preview-trigger" role="button" tabindex="0" data-svg-preview-id="${id}" data-svg-preview-title="${escapeHtml(`${row.relay_label} · ${row.model_id}`)}" data-svg-preview-time="${escapeHtml(formatSvgTime(row.completed_at))}" data-svg-preview-score="${scoreText}" data-svg-preview-comment="${escapeHtml(row.score_comment || '')}" aria-label="点击放大播放 ${relayLabel} 生成的鹈鹕骑车动画"><iframe class="svg-preview" src="/api/svg-generations/${id}/preview" title="${relayLabel} 生成的鹈鹕骑车动画" sandbox loading="lazy"></iframe><span class="svg-preview-hint">点击放大播放</span></div>`
+      : `<div class="svg-preview-empty"><i data-lucide="${icon}" class="${row.status==='generating'?'spin':''}"></i>${row.status==='failed' ? '未生成' : label}</div>`;
     const attempts = Math.max(1, Number(row.attempts) || 1);
     const retryCount = attempts - 1;
+    // 分数标注评分依据，渲染失败直接显示原因。
+    const scoreValue = row.status === 'completed' && row.score !== null && row.score !== undefined
+      ? Number(row.score) : NaN;
+    const scoreText = Number.isFinite(scoreValue) ? scoreValue.toFixed(1) : '';
+    const scoreClass = !scoreText ? 'is-na' : (scoreValue >= 90 ? 'is-good' : (scoreValue >= 70 ? 'is-mid' : 'is-bad'));
+    const basis = row.score_label || (row.score_is_legacy ? '旧评分口径' : '实际画面评分');
+    const basisLabel = row.score_fallback_relay ? `${basis} · 备用渠道 ${row.score_fallback_relay}` : basis;
+    const unscoredLabel = row.review_basis === 'render-failed' ? basisLabel : '—';
+    const scoreCell = scoreText
+      ? `<span class="svg-score ${scoreClass}" title="${escapeHtml(basisLabel)}">${scoreText} 分</span><div class="muted">${escapeHtml(basisLabel)}</div>`
+      : `<span class="svg-score is-na">${escapeHtml(unscoredLabel)}</span>`;
     const retryHint = row.status === 'failed'
       ? `上游临时故障，自动重试 ${retryCount} 次仍未成功`
       : (row.status === 'completed'
@@ -1245,14 +1293,17 @@ async function loadSvgGenerations(){
       ? `${retryBadge}<span class="svg-error">${escapeHtml(row.error_detail || '渠道没有返回可用 SVG')}</span><div class="muted">${row.failure_log_available
           ? `<a href="/api/svg-generations/${id}/failure-log">下载完整失败日志</a>`
           : '该记录未保留原始日志'}</div>`
-      : `${retryBadge}<div>${row.status === 'completed' ? '动画可播放' : '等待渠道返回动画'}</div>`;
+      : `${retryBadge}<div>${row.status === 'completed' ? '动画可播放' : '等待渠道返回动画'}</div>${reviewNote}`;
+    const reviewNote = row.score_comment
+      ? `<div class="muted">评分：${escapeHtml(row.score_comment)}</div>`
+      : '';
     const triggerLabel = row.trigger === 'scheduled' ? '自动监控'
       : (row.trigger === 'validation' ? '开发验证' : '手动生成');
     const html = `<tr data-svg-generation-id="${id}"><td>${preview}</td><td><b>${relayLabel}</b><div class="muted">${relayName}</div></td>
       <td><span class="model-chip" title="${model}">${model}</span></td>
       <td><span class="svg-state ${css}"><i data-lucide="${icon}" class="${row.status==='generating'?'spin':''}"></i>${label}</span></td>
       <td>${triggerLabel}</td><td>${escapeHtml(formatSvgTime(row.requested_at))}</td>
-      <td>${escapeHtml(formatSvgTime(row.completed_at))}</td><td>${elapsed}</td><td>${note}</td></tr>`;
+      <td>${scoreCell}</td><td>${elapsed}</td><td>${note}</td></tr>`;
     const holder = document.createElement('tbody');
     holder.innerHTML = html;
     const replacement = holder.firstElementChild;
@@ -1323,7 +1374,12 @@ function openSvgPreview(trigger){
   const frame = $('svgPreviewFrame');
   if(!dialog || !frame || !trigger?.dataset.svgPreviewId) return;
   lastSvgPreviewTrigger = trigger;
-  $('svgPreviewTitle').textContent = `${trigger.dataset.svgPreviewTitle || '鹈鹕骑车动画'} · ${trigger.dataset.svgPreviewTime || ''}`;
+  const scoreLabel = trigger.dataset.svgPreviewScore ? ` · ${trigger.dataset.svgPreviewScore} 分` : '';
+  $('svgPreviewTitle').textContent = `${trigger.dataset.svgPreviewTitle || '鹈鹕骑车动画'}${scoreLabel} · ${trigger.dataset.svgPreviewTime || ''}`;
+  const commentNode = $('svgPreviewComment');
+  const comment = trigger.dataset.svgPreviewComment || '';
+  commentNode.textContent = comment ? `AI 评分：${comment}` : '';
+  commentNode.hidden = !comment;
   frame.title = `${trigger.dataset.svgPreviewTitle || '鹈鹕骑车动画'} 放大预览`;
   frame.src = `/api/svg-generations/${encodeURIComponent(trigger.dataset.svgPreviewId)}/preview`;
   if(!dialog.open) dialog.showModal();
@@ -1820,6 +1876,19 @@ async function loadSettings(){
   const s = await api('/api/settings');
   $('s_enabled').checked = s.schedule_enabled;
   $('s_time').value = s.schedule_time;
+/** 回填 AI 评分的主渠道和备用渠道。 */
+async function loadReviewRelays(selected, fallback){
+  const select = $('s_svg_review_relay');
+  const fallbackSelect = $('s_svg_review_fallback_relay');
+  const relays = await api('/api/relays');
+  const options = relays.map(r =>
+    `<option value="${escapeHtml(r.name)}">${escapeHtml(r.label)}（${escapeHtml(r.name)}）</option>`).join('');
+  select.innerHTML = '<option value="">未配置（不评分）</option>' + options;
+  fallbackSelect.innerHTML = '<option value="">未配置</option>' + options;
+  select.value = selected || '';
+  fallbackSelect.value = fallback || '';
+}
+
   $('s_baseline').value = s.baseline_days;
   $('s_minhist').value = s.min_history_days;
   $('s_drop').value = s.drop_threshold;
@@ -1839,6 +1908,13 @@ async function loadSettings(){
 /** 保存设置 */
 async function saveSettings(){
   const outputTokens = Number($('s_tokens').value);
+  $('s_svg_prompt').value = s.svg_drawing_prompt || '';
+  $('s_svg_review_enabled').checked = s.svg_review_enabled;
+  $('s_svg_review_model').value = s.svg_review_model || '';
+  $('s_svg_review_reasoning').value = s.svg_review_reasoning_effort || 'low';
+  $('s_svg_review_retry_count').value = s.svg_review_retry_count ?? 2;
+  $('s_svg_review_prompt').value = s.svg_review_prompt || '';
+  await loadReviewRelays(s.svg_review_relay, s.svg_review_fallback_relay);
   const inputTokens = Number($('s_input_tokens').value);
   if(!Number.isSafeInteger(outputTokens) || outputTokens < 1 || !Number.isSafeInteger(inputTokens) || inputTokens < 1){
     return toast('输出 Token 和输入 Token 预算请输入正整数');
@@ -1856,6 +1932,16 @@ async function saveSettings(){
     baseline_days:+$('s_baseline').value||7, min_history_days:+$('s_minhist').value||3,
     drop_threshold:+$('s_drop').value||8, max_tokens:outputTokens, max_input_tokens:inputTokens,
     api_timeout_minutes:apiTimeout,
+  const drawingPrompt = $('s_svg_prompt').value.trim();
+  const svgReviewRetryCount = $('s_svg_review_retry_count').valueAsNumber;
+  if(!Number.isSafeInteger(svgReviewRetryCount) || svgReviewRetryCount < 0){
+    return toast('评分重试次数请输入非负整数');
+  }
+  const reviewRelay = $('s_svg_review_relay').value;
+  const fallbackRelay = $('s_svg_review_fallback_relay').value;
+  if(reviewRelay && reviewRelay === fallbackRelay){
+    return toast('主评分渠道和备用评分渠道必须不同');
+  }
     reasoning_effort:$('s_reasoning').value,
     anthropic_reasoning_effort:$('s_anthropic_reasoning').value,
     concurrency:+$('s_conc').value||5, concurrency_fallback:1,
@@ -1868,9 +1954,19 @@ async function saveSettings(){
   toast('设置已保存');
 }
 
+    svg_drawing_prompt:drawingPrompt,
+    svg_review_enabled:$('s_svg_review_enabled').checked,
+    svg_review_relay:reviewRelay,
+    svg_review_fallback_relay:fallbackRelay,
+    svg_review_model:$('s_svg_review_model').value.trim(),
+    svg_review_reasoning_effort:$('s_svg_review_reasoning').value,
+    svg_review_retry_count:svgReviewRetryCount,
+    svg_review_prompt:$('s_svg_review_prompt').value,
 /* ---------------- 启动 ---------------- */
 applyTheme(document.documentElement.dataset.theme || 'dark', false);
 refreshIcons();
+  // 重新读取设置：提示词留空时后端会回填内置文本，页面立即展示实际生效的内容。
+  await loadSettings();
 initDash();
 </script>
 </body>

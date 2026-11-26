@@ -50,6 +50,7 @@ def main():
                 image = svg.screenshot(path=str(args.output_dir / f"animation-{index}.png"))
                 snapshots.append(hashlib.sha256(image).hexdigest())
             page.goto(base, wait_until="networkidle")
+            page.get_by_role("button", name="动画", exact=True).click()
             preview = page.locator(f'[data-svg-preview-id="{args.generation_id}"]')
             preview.wait_for(state="visible")
             preview.scroll_into_view_if_needed()

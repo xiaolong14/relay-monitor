@@ -22,6 +22,7 @@ INCLUDE = [
     "package.json",
     "config.json",      # 仅含示例占位符 Key（sk-替换成xx的KEY），无真实数据
     "resources/default_aime_30.json",
+    "resources/svg_specs/pelican_ride_v2.json",
     "server.py",
     "launcher.py",
     "monitor.py",
@@ -32,6 +33,8 @@ INCLUDE = [
     "relay_monitor/request_options.py",
     "relay_monitor/stream_transport.py",
     "relay_monitor/svg_artwork.py",
+    "relay_monitor/svg_eval.py",
+    "relay_monitor/svg_review.py",
     "providers/anthropic_provider.cjs",
     "providers/openai_responses_provider.cjs",
     "providers/openai_chat_provider.cjs",

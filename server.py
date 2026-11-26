@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import monitor
-from relay_monitor import datasets, svg_artwork
+from relay_monitor import datasets, svg_artwork, svg_review
 from relay_monitor.app_paths import RESOURCE_DIR
 from relay_monitor.request_options import (
     DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, token_budget,
@@ -92,6 +92,15 @@ def load_settings(con):
         "svg_interval_minutes": "30",
         "svg_next_run_at": "",
         "svg_time_windows": SVG_TIME_WINDOW_DEFAULT_JSON,
+        # 绘制提示词与评分提示词都可从设置页调整，便于对比不同模型的真实差异。
+        "svg_drawing_prompt": svg_artwork.USER_PROMPT,
+        "svg_review_enabled": "1",
+        "svg_review_relay": "",
+        "svg_review_fallback_relay": "",
+        "svg_review_model": "",
+        "svg_review_reasoning_effort": "low",
+        "svg_review_retry_count": str(svg_review.DEFAULT_REVIEW_RETRY_COUNT),
+        "svg_review_prompt": "",
     }
     # 首次运行时用 config.json 的 settings 初始化缺省值
     rows = dict(con.execute("SELECT key, value FROM settings").fetchall())
@@ -103,6 +112,13 @@ def load_settings(con):
             if k in cfg_raw:
                 defaults[k] = str(cfg_raw[k])
     rows = monitor.migrate_token_budget_settings(con)
+    saved_review_prompt = (rows.get("svg_review_prompt") or "").strip()
+    if saved_review_prompt in svg_review.BUILT_IN_REVIEW_PROMPTS:
+        # 已保存的内置提示词恢复为默认标记，后续升级可以自动生效。
+        con.execute("UPDATE settings SET value='' WHERE key='svg_review_prompt' AND value=?",
+                    (rows["svg_review_prompt"],))
+        rows["svg_review_prompt"] = ""
+        print("[设置迁移] 已恢复 SVG 默认视觉评分规则")
     merged = {**defaults, **rows}
     for key, value in defaults.items():
         if key not in rows:
@@ -126,6 +142,14 @@ def load_settings(con):
         "svg_interval_minutes": max(1, min(1440, int(merged["svg_interval_minutes"]))),
         "svg_next_run_at": merged["svg_next_run_at"],
         "svg_time_windows": load_svg_time_windows(merged["svg_time_windows"]),
+        "svg_drawing_prompt": merged["svg_drawing_prompt"].strip() or svg_artwork.USER_PROMPT,
+        "svg_review_enabled": merged["svg_review_enabled"] == "1",
+        "svg_review_relay": merged["svg_review_relay"],
+        "svg_review_fallback_relay": merged["svg_review_fallback_relay"],
+        "svg_review_model": merged["svg_review_model"],
+        "svg_review_reasoning_effort": merged["svg_review_reasoning_effort"],
+        "svg_review_retry_count": int(merged["svg_review_retry_count"]),
+        "svg_review_prompt": (merged["svg_review_prompt"] or "").strip() or svg_review.DEFAULT_REVIEW_PROMPT,
         "last_auto_date": merged.get("last_auto_date", ""),
     }
 
@@ -238,7 +262,8 @@ def _svg_row_status(con, generation_id, status, **values):
     """更新单条 SVG 记录，并保留每个状态节点的时间。"""
     fields = ["status=?"]
     params = [status]
-    for key in ("started_at", "completed_at", "svg_content", "error_detail", "attempts"):
+    for key in ("started_at", "completed_at", "svg_content", "error_detail", "attempts",
+                "score", "score_detail"):
         if key in values:
             fields.append(f"{key}=?")
             params.append(values[key])
@@ -301,6 +326,122 @@ def _archive_first_svg_failure_log(generation_id):
         print(f"[svg] 记录 #{generation_id} 首次失败日志归档失败：{type(exc).__name__}")
 
 
+def _review_svg(generation_id, svg, settings):
+    """把 SVG 渲染图交给评审模型打分，返回总分与完整明细 JSON。
+
+    未启用或未配置评分渠道时直接跳过；评分失败只写入错误明细，
+    不影响已经成功的生成记录。
+    """
+    if not settings.get("svg_review_enabled"):
+        return None, None
+    relay_name = (settings.get("svg_review_relay") or "").strip()
+    if not relay_name:
+        print(f"[svg] 记录 #{generation_id} 未配置评分渠道，跳过 AI 评分")
+        return None, None
+    con = get_con()
+    review_relays = {r["name"]: r for r in monitor.load_relays(con)}
+    con.close()
+    review_relay = review_relays.get(relay_name)
+    fallback_name = (settings.get("svg_review_fallback_relay") or "").strip()
+    fallback_relay = review_relays.get(fallback_name)
+    if fallback_name and not fallback_relay:
+        print(f"[svg] 记录 #{generation_id} 备用评分渠道不存在：{fallback_name}")
+    model = (settings.get("svg_review_model") or "").strip() or (review_relay or {}).get("model", "")
+    meta = {
+        "mechanism": "ai-rendered-image-review", "relay": relay_name,
+        "relay_label": (review_relay or {}).get("label", ""), "model": model,
+        "rubric_version": svg_review.REVIEW_RUBRIC_VERSION,
+    }
+    if not review_relay:
+        print(f"[svg] 记录 #{generation_id} 评分渠道不存在：{relay_name}")
+        return None, json.dumps(
+            {**meta, "error": "评分渠道不存在，请在设置页重新选择"}, ensure_ascii=False,
+        )
+    try:
+        preview_image = svg_review.render_svg_preview(svg)
+    except Exception as exc:
+        render_error = str(exc) if isinstance(exc, svg_review.SVGReviewError) else type(exc).__name__
+        print(f"[svg] 记录 #{generation_id} 成品图渲染失败，跳过评分：{render_error}")
+        return None, json.dumps({
+            **meta,
+            "review_basis": "render-failed",
+            "error": "成品图渲染失败，未进行评分",
+            "render_error": render_error,
+        }, ensure_ascii=False)
+
+    try:
+        result = svg_review.review_svg(
+            review_relay, prompt=settings.get("svg_review_prompt"),
+            model=model, api_timeout_minutes=settings["api_timeout_minutes"],
+            reasoning_effort=settings.get("svg_review_reasoning_effort") or "low",
+            retry_count=settings["svg_review_retry_count"],
+            fallback_relay=fallback_relay,
+            preview_image=preview_image,
+        )
+        custom_prompt = bool(
+            (settings.get("svg_review_prompt") or "").strip()
+            and (settings.get("svg_review_prompt") or "").strip() != svg_review.DEFAULT_REVIEW_PROMPT
+        )
+        result["rubric_version"] = "custom" if custom_prompt else svg_review.REVIEW_RUBRIC_VERSION
+        result["review_prompt_type"] = "custom" if custom_prompt else "default"
+        result["mechanism"] = "ai-rendered-image-review"
+        print(f"[svg] 记录 #{generation_id} 成品图评分：模型={model}，"
+              f"评分渠道={result.get('relay', relay_name)}，"
+              f"规则={result['rubric_version']}，分数={result['score']}，"
+              f"尝试次数={result.get('review_attempts', 1)}")
+        return result["score"], json.dumps(result, ensure_ascii=False)
+    except svg_review.SVGReviewError as exc:
+        print(f"[svg] 记录 #{generation_id} AI 评分失败：渠道={exc.relay or relay_name}，"
+              f"尝试次数={exc.attempts or 0}，原因={exc}")
+        return None, json.dumps({
+            **meta, "review_basis": "rendered-image", "error": str(exc)[:300],
+            "review_attempts": exc.attempts, "last_relay": exc.relay,
+            "protocol": exc.protocol, "http_status": exc.http_status, "request_id": exc.request_id,
+        }, ensure_ascii=False)
+    except Exception as exc:
+        # 评分失败不能回滚生成结果，只保留可诊断原因供表格展示。
+        print(f"[svg] 记录 #{generation_id} AI 评分内部异常：{type(exc).__name__}")
+        return None, json.dumps({**meta, "error": "评分服务内部异常，请查看服务日志"}, ensure_ascii=False)
+
+
+def _score_comment(score_detail):
+    """从评分明细中提取短评或失败原因，供表格直接展示。"""
+    if not score_detail:
+        return ""
+    try:
+        data = json.loads(score_detail)
+    except (TypeError, ValueError):
+        return ""
+    return str(data.get("comment") or data.get("render_error") or data.get("error") or "").strip()[:160]
+
+
+def _score_metadata(score_detail):
+    """提取评分口径，未留版本信息的历史记录按旧口径处理。"""
+    try:
+        data = json.loads(score_detail or "")
+    except (TypeError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    basis = str(data.get("review_basis") or "legacy-source")
+    version = str(data.get("rubric_version") or "legacy")
+    if basis == "render-failed":
+        label = "评分图渲染失败"
+    elif basis == "rendered-image" and version == "custom":
+        label = "自定义评分"
+    elif basis != "rendered-image" or version != svg_review.REVIEW_RUBRIC_VERSION:
+        label = "旧评分口径"
+    else:
+        label = "实际画面评分"
+    return {
+        "review_basis": basis,
+        "rubric_version": version,
+        "score_label": label,
+        "score_is_legacy": label in ("旧评分口径", "自定义评分"),
+        "score_fallback_relay": (data.get("relay_label") or data.get("relay")) if data.get("primary_relay") else None,
+    }
+
+
 def _run_one_svg_generation(generation_id, relay):
     """执行一个渠道的 SVG 生成；上游临时断流时自动重试一次，单渠道失败不影响其他渠道。"""
     started = datetime.datetime.now().isoformat(timespec="seconds")
@@ -335,6 +476,7 @@ def _run_one_svg_generation(generation_id, relay):
                 relay, reasoning_effort=reasoning_effort, api_timeout_minutes=api_timeout_minutes,
                 max_tokens=settings["max_tokens"], max_input_tokens=settings["max_input_tokens"],
                 failure_log_path=_svg_failure_log_path(generation_id),
+                prompt=settings.get("svg_drawing_prompt") or svg_artwork.USER_PROMPT,
                 failure_log_metadata={
                     "generation_id": generation_id, "relay": relay["name"],
                     "relay_label": relay["label"], "started_at": started,
@@ -369,16 +511,24 @@ def _run_one_svg_generation(generation_id, relay):
             print(f"[svg] 渠道 {relay['label']} 发生内部异常：{type(exc).__name__}")
             return False
 
+        # 先落库生成结果，再调用评审模型；评分较慢时记录不会一直停在“生成中”。
         con = get_con()
         _svg_row_status(
             con, generation_id, "completed",
             completed_at=datetime.datetime.now().isoformat(timespec="seconds"),
-            svg_content=svg,
-            error_detail=None, attempts=attempt,
+            svg_content=svg, error_detail=None, attempts=attempt,
         )
         con.close()
+        score, score_detail = _review_svg(generation_id, svg, settings)
+        if score is not None or score_detail:
+            con = get_con()
+            _svg_row_status(
+                con, generation_id, "completed", score=score, score_detail=score_detail,
+            )
+            con.close()
         suffix = f"（第 {attempt} 次尝试）" if attempt > 1 else ""
-        print(f"[svg] 渠道 {relay['label']} 生成完成{suffix}：记录 #{generation_id}")
+        score_text = f"{score:.1f} 分" if score is not None else "未评分"
+        print(f"[svg] 渠道 {relay['label']} 生成完成{suffix}：记录 #{generation_id}，AI 评分 {score_text}")
         return True
 
 
@@ -505,7 +655,7 @@ def list_svg_generations(limit=50):
     con = sqlite3.connect(monitor.DB_PATH, timeout=10)
     rows = con.execute(
         """SELECT id, relay, relay_label, model_id, status, trigger, error_detail,
-                  requested_at, started_at, completed_at, attempts
+                  requested_at, started_at, completed_at, attempts, score, score_detail
            FROM svg_generations ORDER BY id DESC LIMIT ?""", (limit,)
     ).fetchall()
     settings = dict(con.execute(
@@ -518,6 +668,9 @@ def list_svg_generations(limit=50):
         "model_id": row[3] or "未记录", "status": row[4], "trigger": row[5],
         "error_detail": row[6], "requested_at": row[7], "started_at": row[8],
         "completed_at": row[9], "attempts": row[10] or 1,
+        "score": row[11],
+        "score_comment": _score_comment(row[12]),
+        **_score_metadata(row[12]),
         "failure_log_available": row[4] == "failed" and _svg_failure_log_path(row[0]).is_file(),
     } for row in rows]
     with SVG_STATE_LOCK:
@@ -798,6 +951,15 @@ class SettingsIn(BaseModel):
     svg_interval_minutes: int | None = None
     # 自动生成时段，如 [{"start": "08:00", "end": "12:00"}]；为空/缺省表示不修改。
     svg_time_windows: list[dict[str, str]] | list[str] | None = None
+    # 绘制提示词与 AI 评分配置；缺省表示不修改。
+    svg_drawing_prompt: str | None = None
+    svg_review_enabled: bool | None = None
+    svg_review_relay: str | None = None
+    svg_review_fallback_relay: str | None = None
+    svg_review_model: str | None = None
+    svg_review_reasoning_effort: ReasoningEffort | None = None
+    svg_review_retry_count: int | None = Field(default=None, ge=0, strict=True)
+    svg_review_prompt: str | None = None
 
 
 class QuestionIn(BaseModel):
@@ -1074,6 +1236,27 @@ def update_settings(body: SettingsIn):
     except ValueError:
         raise HTTPException(400, "定时时间格式应为 HH:MM")
     con = get_con()
+    review_relay = body.svg_review_relay.strip() if body.svg_review_relay is not None else None
+    fallback_relay = body.svg_review_fallback_relay.strip() if body.svg_review_fallback_relay is not None else None
+    if review_relay is not None or fallback_relay is not None:
+        # 读取、校验和保存渠道对使用同一个写事务，避免并发设置反向覆盖。
+        con.execute("BEGIN IMMEDIATE")
+        saved_relays = dict(con.execute("SELECT key, value FROM settings WHERE key IN (?, ?)",
+                                      ("svg_review_relay", "svg_review_fallback_relay")))
+        for relay_name in (review_relay, fallback_relay):
+            if relay_name and not con.execute("SELECT 1 FROM relays WHERE name=?", (relay_name,)).fetchone():
+                con.close()
+                raise HTTPException(400, f"评分渠道不存在：{relay_name}")
+        primary = saved_relays.get("svg_review_relay", "") if review_relay is None else review_relay
+        fallback = saved_relays.get("svg_review_fallback_relay", "") if fallback_relay is None else fallback_relay
+        if primary and primary == fallback:
+            con.close()
+            raise HTTPException(400, "主评分渠道和备用评分渠道必须不同")
+        con.executemany(
+            "INSERT INTO settings(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (("svg_review_relay", primary), ("svg_review_fallback_relay", fallback)),
+        )
+        con.commit()
     save_setting(con, "schedule_enabled", 1 if body.schedule_enabled else 0)
     save_setting(con, "schedule_time", body.schedule_time)
     save_setting(con, "baseline_days", body.baseline_days)
@@ -1108,6 +1291,26 @@ def update_settings(body: SettingsIn):
             con.close()
             raise HTTPException(400, str(exc))
         save_setting(con, "svg_time_windows", json.dumps(windows, ensure_ascii=False))
+    if body.svg_drawing_prompt is not None:
+        # 留空表示使用内置绘图提示词；保存内置文本，页面刷新后仍能看到完整内容。
+        save_setting(
+            con, "svg_drawing_prompt",
+            body.svg_drawing_prompt.strip() or svg_artwork.USER_PROMPT,
+        )
+    if body.svg_review_enabled is not None:
+        save_setting(con, "svg_review_enabled", 1 if body.svg_review_enabled else 0)
+    if body.svg_review_model is not None:
+        save_setting(con, "svg_review_model", body.svg_review_model.strip())
+    if body.svg_review_reasoning_effort is not None:
+        save_setting(con, "svg_review_reasoning_effort", body.svg_review_reasoning_effort)
+    if body.svg_review_retry_count is not None:
+        save_setting(con, "svg_review_retry_count", body.svg_review_retry_count)
+        print(f"[设置] 动画评分失败后立即重试次数已更新：{body.svg_review_retry_count}")
+    if body.svg_review_prompt is not None:
+        prompt = body.svg_review_prompt.strip()
+        if prompt in svg_review.BUILT_IN_REVIEW_PROMPTS:
+            prompt = ""
+        save_setting(con, "svg_review_prompt", prompt)
     # 周期或时段变更后，立即按新配置重算下一次自动生成时间。
     if body.svg_interval_minutes is not None or body.svg_time_windows is not None:
         current = load_settings(con)

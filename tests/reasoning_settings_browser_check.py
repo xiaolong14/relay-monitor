@@ -47,12 +47,12 @@ def main():
                         elif url.path == "/":
                             route.fulfill(status=200, content_type="text/html",
                                           body=server.INDEX_PATH.read_text("utf-8"))
-                        elif url.path == "/api/settings" or url.path.startswith("/api/relays"):
+                        elif url.path.startswith(("/api/relays", "/static/")) or url.path == "/api/settings":
                             response = client.request(
                                 request.method, url.path, content=request.post_data,
                                 headers={"Content-Type": "application/json"},
                             )
-                            route.fulfill(status=response.status_code, content_type="application/json",
+                            route.fulfill(status=response.status_code, content_type=response.headers.get("content-type"),
                                           body=response.content)
                         elif url.path == "/api/days":
                             route.fulfill(status=200, json=[])
@@ -70,6 +70,17 @@ def main():
                     expect(select).to_have_value("xhigh")
                     expect(page.locator("#s_anthropic_reasoning")).to_have_value("xhigh")
                     expect(select.locator("option")).to_have_count(8)
+                    retry_count = page.get_by_label("评分失败后立即重试次数")
+                    expect(retry_count).to_have_value("2")
+                    for count in ("0", "4"):
+                        retry_count.fill(count)
+                        with page.expect_response(lambda response: response.request.method == "PUT" and
+                                                  response.url.endswith("/api/settings")) as saved:
+                            page.get_by_role("button", name="保存设置").click()
+                        assert saved.value.status == 200
+                        page.reload(wait_until="networkidle")
+                        page.locator('nav button[data-tab="settings"]').click()
+                        expect(retry_count).to_have_value(count)
                     for effort in ("max", "high", "none", "default", "xhigh"):
                         select.select_option(effort)
                         page.get_by_role("button", name="保存设置").click()
@@ -109,16 +120,26 @@ def main():
                     page.locator('nav button[data-tab="settings"]').click()
                     select.select_option("low")
                     page.locator("#s_anthropic_reasoning").select_option("medium")
+                    primary_review = page.get_by_label("评分渠道", exact=True)
+                    fallback_review = page.get_by_label("备用评分渠道", exact=True)
+                    primary_review.select_option("openai-fixed")
+                    fallback_review.select_option("openai-fixed")
+                    page.get_by_role("button", name="保存设置").click()
+                    expect(page.locator("#toast")).to_have_text("主评分渠道和备用评分渠道必须不同")
+                    fallback_review.select_option("responses-fixed")
                     with page.expect_response(lambda response: response.request.method == "PUT" and
                                               response.url.endswith("/api/settings")) as saved:
                         page.get_by_role("button", name="保存设置").click()
                     assert saved.value.status == 200
                     page.reload(wait_until="networkidle")
+                    page.locator('nav button[data-tab="settings"]').click()
+                    expect(primary_review).to_have_value("openai-fixed")
+                    expect(fallback_review).to_have_value("responses-fixed")
                     page.locator('nav button[data-tab="relays"]').click()
                     for label, expected in (("独立 OpenAI", "高（high）"),
                                             ("独立 Responses", "最低（minimal）"),
                                             ("独立 Anthropic", "最高（max）"),
-                                            ("继承 OpenAI", "跟随默认 · 低（low）")):
+                                            ("继承 OpenAI", "低（low）")):
                         expect(page.locator("#relayTable tr").filter(has_text=label)).to_contain_text(expected)
                     responses_row = page.locator("#relayTable tr").filter(has_text="独立 Responses")
                     expect(responses_row).to_contain_text("OpenAI Responses")
@@ -138,7 +159,7 @@ def main():
                     assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 390
                     assert not errors, errors
                     browser.close()
-                print("浏览器检查通过：渠道新增和编辑、协议切换、独立配置、默认继承、刷新回显及移动端显示均正常。")
+                print("浏览器检查通过：评分重试与备用渠道设置、渠道新增和编辑、协议切换、默认继承、刷新回显及移动端显示均正常。")
                 print(f"截图：{screenshot}")
             finally:
                 client.close()

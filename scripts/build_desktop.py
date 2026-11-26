@@ -34,10 +34,11 @@ def prepare_node_runtime():
 
 
 def ensure_dependencies():
-    """安装锁定的 Node 依赖并确认 PyInstaller 可用。"""
+    """为当前构建环境安装运行依赖，并确认 PyInstaller 可用。"""
     npm = shutil.which("npm.cmd") or shutil.which("npm")
     if not npm:
         raise SystemExit("未找到 npm")
+    run([sys.executable, "-m", "pip", "install", "-r", str(BASE / "requirements.txt")])
     run([npm, "ci", "--omit=dev"])
     try:
         import PyInstaller  # noqa: F401
